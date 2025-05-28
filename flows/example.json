@@ -1,0 +1,6 @@
+{
+  "steps": [
+    { "trigger": "oi", "response": "Olá! Como posso ajudar?" },
+    { "trigger": "preço", "response": "Nossos preços variam conforme o produto." }
+  ]
+}
