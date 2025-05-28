@@ -15,7 +15,7 @@ export default async function messageRoutes(fastify, opts) {
 
     try {
       const res = await axios.post(
-        "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages",
+        `https://graph.facebook.com/v19.0/${process.env.PHONE_NUMBER_ID}/messages`,
         data,
         {
           headers: {
