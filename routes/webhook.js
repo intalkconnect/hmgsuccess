@@ -19,6 +19,7 @@ export default async function webhookRoutes(fastify, opts) {
 
   fastify.post('/', async (req, reply) => {
     const body = req.body;
+    console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
     fastify.log.info('Mensagem recebida:', body);
 
     const messages = body.entry?.[0]?.changes?.[0]?.value?.messages;
@@ -27,12 +28,14 @@ export default async function webhookRoutes(fastify, opts) {
 
     if (messages && messages.length > 0 && from) {
       const msgBody = messages[0].text?.body || '';
+      console.log(`🧾 Mensagem recebida de ${from}:`, msgBody);
 
       const flowPath = path.resolve('flows', 'example.json');
       const rawFlow = fs.readFileSync(flowPath);
       const flow = JSON.parse(rawFlow);
 
       const botResponse = processMessage(msgBody.toLowerCase(), flow);
+      console.log(`🤖 Resposta do bot:`, botResponse);
 
       await supabase.from('messages').insert([
         {
@@ -56,6 +59,8 @@ export default async function webhookRoutes(fastify, opts) {
       } catch (err) {
         fastify.log.error('Erro ao enviar resposta do bot:', err);
       }
+    } else {
+      console.log('⚠️ Nenhuma mensagem ou remetente identificado no payload.');
     }
 
     reply.code(200).send('EVENT_RECEIVED');
