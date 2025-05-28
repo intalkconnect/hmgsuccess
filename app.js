@@ -14,7 +14,7 @@ await initDB();
 fastify.register(webhookRoutes, { prefix: '/webhook' });
 fastify.register(messageRoutes, { prefix: '/messages' });
 
-fastify.listen({ port: process.env.PORT || 3000 }, (err, address) => {
+fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' }, (err, address) => {
   if (err) throw err;
   fastify.log.info(`Servidor rodando em ${address}`);
 });
