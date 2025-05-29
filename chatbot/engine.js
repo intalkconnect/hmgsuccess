@@ -29,7 +29,7 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  // 🟡 Salva a mensagem do usuário como input.message
+  // 💬 Salva input do usuário na variável input.message
   sessionVars.input = {
     message
   };
@@ -91,7 +91,7 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      // ✅ Envia a mensagem do bloco ao usuário
+      // ✅ Envia a mensagem ao usuário
       if (response) {
         try {
           await sendWhatsappMessage({
@@ -108,22 +108,26 @@ export async function processMessage(message, flow, vars, userId) {
       const shouldWait = block.awaitResponse === true;
       const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
-      // 🧠 Lógica correta para definir qual bloco salvar na sessão
-      let newCurrentBlock = nextBlock;
-      if (shouldWait && !message) {
-        newCurrentBlock = currentBlockId;
+      // 🧠 Decide qual bloco deve ser salvo na sessão
+      let sessionBlock = currentBlockId;
+      if (!shouldWait || (shouldWait && message)) {
+        sessionBlock = nextBlock;
       }
 
-      // 📝 Salva a sessão com o bloco apropriado
-      await supabase.from('sessions').upsert({
+      // 📝 Salva sessão com o bloco correto
+      const { error } = await supabase.from('sessions').upsert({
         user_id: userId,
-        current_block: newCurrentBlock,
+        current_block: sessionBlock,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString()
       });
 
-      // ⏩ Decide se avança ou para
+      if (error) {
+        console.error('❌ Erro ao salvar sessão:', error);
+      }
+
+      // ⏭️ Decide se continua ou para
       if (shouldWait && !message) {
         if (timeout > 0) {
           await new Promise((resolve) => setTimeout(resolve, timeout * 1000));
