@@ -1,20 +1,22 @@
 import { substituteVariables } from '../../utils/vars.js';
 import axios from 'axios';
 import vm from 'vm';
+
 export async function executeBlock(block, vars, message) {
   let content = '';
-  // substitui variáveis e executa api_call ou script
-  if (block.content) {
+
+  // Substitui variáveis no conteúdo
+  if (block.content != null) {
     content = typeof block.content === 'string'
       ? substituteVariables(block.content, vars)
       : JSON.parse(substituteVariables(JSON.stringify(block.content), vars));
   }
+
+  // Executa api_call ou script
   switch (block.type) {
     case 'api_call': {
       const url = substituteVariables(block.url, vars);
-      const payload = JSON.parse(
-        substituteVariables(JSON.stringify(block.body || {}), vars)
-      );
+      const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), vars));
       const res = await axios({ method: block.method || 'GET', url, data: payload });
       vars.responseStatus = res.status;
       vars.responseData = res.data;
@@ -45,9 +47,5 @@ export async function executeBlock(block, vars, message) {
       break;
   }
 
-  return {
-    content,
-    nextBlock: block.next,
-    delaySec: parseInt(block.awaitTimeInSeconds || '0', 10)
-  };
+  return { content, nextBlock: block.next, delaySec: parseInt(block.awaitTimeInSeconds || '0', 10) };
 }
