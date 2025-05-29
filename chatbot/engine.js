@@ -116,9 +116,40 @@ export async function processMessage(message, flow, vars, userId) {
           }
           break;
 
+          case 'script':
+  try {
+    const sandbox = {
+      vars: sessionVars,
+      output: '',
+    };
+
+    // Define e executa a função personalizada
+    const fullScript = `
+      ${block.code}
+      output = ${block.function};
+    `;
+
+    vm.createContext(sandbox);
+    vm.runInContext(fullScript, sandbox);
+
+    // Salva o resultado na variável definida
+    if (block.outputVar && sandbox.output !== undefined) {
+      sessionVars[block.outputVar] = sandbox.output;
+    }
+
+    response = sandbox.output?.toString?.() || '';
+  } catch (err) {
+    console.error('❌ Erro ao executar bloco script:', err);
+    response = '⚠️ Erro ao executar script do bot.';
+  }
+  break;
+
+
         default:
           response = '[Bloco não reconhecido]';
       }
+
+      
 
       if (response) {
         try {
