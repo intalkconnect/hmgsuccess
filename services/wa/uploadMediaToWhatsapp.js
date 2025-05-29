@@ -10,7 +10,7 @@ export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
   form.append('file', await axios.get(fileUrl, { responseType: 'stream' }).then(res => res.data));
 
   const res = await axios.post(
-    `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/media`,
+    `https://graph.facebook.com/v22.0/${process.env.PHONE_NUMBER_ID}/media`,
     form,
     {
       headers: {
