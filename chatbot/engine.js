@@ -5,32 +5,46 @@ import { dispatchMessage } from './modules/messageDispatcher.js';
 
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
-  if (!flow || !flow.blocks || !flow.start) return flow?.onError?.content;
+  if (!flow || !flow.blocks || !flow.start) {
+    return flow?.onError?.content || 'Erro interno no bot';
+  }
 
-  // carrega ou inicializa sessão
+  // Inicializa sessão
   let session = await getSession(userId, flow, vars);
   let current = session.current_block;
   let lastResponse = null;
 
-  // loop principal
+  // Loop principal
   while (current) {
     const block = flow.blocks[current];
-    const { content, nextBlock, delaySec } = await executeBlock(block, session.vars, message);
+    if (!block) break;
 
-    // delay antes de enviar
-    if (delaySec) await new Promise(r => setTimeout(r, delaySec * 1000));
+    // Executa bloco e obtém conteúdo, próximo bloco padrão e delay
+    const { content, nextBlock: defaultNext, delaySec } = await executeBlock(block, session.vars, message);
 
-    // envia mensagem no canal apropriado
-    lastResponse = await dispatchMessage(session.vars.channel, userId, block.type, content, session.vars.lastMessageId);
+    // Delay antes de enviar, se configurado
+    if (delaySec > 0) {
+      await new Promise(res => setTimeout(res, delaySec * 1000));
+    }
 
-    // calcula próximo bloco
-    const chosen = flow.blocks[current].actions?.find(a => evaluateConditions(a.conditions, session.vars));
-    const next = chosen ? chosen.next : (flow.blocks[current].awaitResponse ? current : nextBlock);
+    // Envia mensagem
+    lastResponse = await dispatchMessage(
+      session.vars.channel,
+      userId,
+      block.type,
+      content,
+      session.vars.lastMessageId
+    );
 
-    // atualiza sessão
-    await saveSession(userId, next, flow.id, session.vars);
+    // Determina próximo bloco pelas actions
+    const action = block.actions?.find(a => evaluateConditions(a.conditions, session.vars));
+    const next = action ? action.next : defaultNext;
 
-    if (flow.blocks[current].awaitResponse) break;
+    // Salva sessão
+    await saveSession(userId, block.awaitResponse ? current : next, flow.id, session.vars);
+
+    // Se aguardando resposta, interrompe
+    if (block.awaitResponse) break;
     current = next;
   }
 
