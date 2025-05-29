@@ -1,6 +1,6 @@
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+import { sendWhatsappMessage, markAsReadAndTyping } from '../services/sendWhatsappMessage.js';
 import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
@@ -27,10 +27,9 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 /**
- * Envia mensagem pelo canal apropriado
- * Retém messageId para fechar typing no WhatsApp
+ * Envia mensagem pelo canal apropriado sem typing indicator
  */
-async function sendMessageByChannel(channel, to, type, content, messageId) {
+async function sendMessageByChannel(channel, to, type, content) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
@@ -39,7 +38,7 @@ async function sendMessageByChannel(channel, to, type, content, messageId) {
   if (type === 'text' && typeof content === 'string') {
     payloadContent = { body: content };
   }
-  return sendWhatsappMessage({ to, type, content: payloadContent, messageId });
+  return sendWhatsappMessage({ to, type, content: payloadContent });
 }
 
 /**
@@ -73,16 +72,20 @@ export async function processMessage(message, flow, vars, rawUserId) {
     // Se aguardando resposta, processa input do usuário
     if (block.awaitResponse && message != null && session?.current_block === currentBlockId) {
       sessionVars.lastUserMessage = message;
-      // escolhe ação conforme condições
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
           break;
         }
       }
-      // atualiza sessão e sai para aguardar nova mensagem
-      await supabase.from('sessions').upsert([{ user_id: userId, current_block: currentBlockId, vars: sessionVars, last_flow_id: flow.id || null, updated_at: new Date().toISOString() }]);
-      break;
+      await supabase.from('sessions').upsert([{
+        user_id: userId,
+        current_block: currentBlockId,
+        vars: sessionVars,
+        last_flow_id: flow.id || null,
+        updated_at: new Date().toISOString()
+      }]);
+      break; // espera próximo input
     }
 
     // Prepara conteúdo do bloco
@@ -119,6 +122,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
     }
 
+    // Typing indicator imediato para WhatsApp
+    if (sessionVars.channel === 'whatsapp' && sessionVars.lastMessageId) {
+      markAsReadAndTyping(sessionVars.lastMessageId).catch(err => console.error('typing erro:', err));
+    }
+
     // Atraso antes de envio: sendDelayInSeconds
     const sendDelay = parseInt(block.sendDelayInSeconds||'0',10);
     if (sendDelay>0) await new Promise(r=>setTimeout(r,sendDelay*1000));
@@ -126,12 +134,22 @@ export async function processMessage(message, flow, vars, rawUserId) {
     // Envia mensagem
     if (content && validTypes.includes(block.type)) {
       try {
-        await sendMessageByChannel(sessionVars.channel||'whatsapp', userId, block.type, content, sessionVars.lastMessageId);
+        await sendMessageByChannel(
+          sessionVars.channel||'whatsapp',
+          userId,
+          block.type,
+          content
+        );
         lastResponse = content;
       } catch(err) {
         console.error('Erro no envio:',err);
         const fallback = typeof content==='object'&&content.url?`Conteúdo: ${content.url}`:`${content}`;
-        await sendMessageByChannel(sessionVars.channel||'whatsapp', userId,'text',fallback, sessionVars.lastMessageId);
+        await sendMessageByChannel(
+          sessionVars.channel||'whatsapp',
+          userId,
+          'text',
+          fallback
+        );
         lastResponse = fallback;
       }
     }
@@ -148,7 +166,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
     if(!nextBlock && !block.awaitResponse) nextBlock = block.next || null;
 
     // Atualiza sessão
-    await supabase.from('sessions').upsert([{ user_id:userId, current_block: block.awaitResponse?currentBlockId:nextBlock, last_flow_id:flow.id||null, vars:sessionVars, updated_at:new Date().toISOString() }]);
+    await supabase.from('sessions').upsert([{
+      user_id: userId,
+      current_block: block.awaitResponse?currentBlockId:nextBlock,
+      last_flow_id: flow.id||null,
+      vars: sessionVars,
+      updated_at: new Date().toISOString()
+    }]);
 
     if(block.awaitResponse) break;
     currentBlockId = nextBlock;
