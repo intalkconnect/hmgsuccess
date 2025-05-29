@@ -31,15 +31,13 @@ export async function processMessage(message, flow, vars, userId) {
       return null;
     }
   } else {
-    await supabase.from('sessions').upsert([
-      {
-        user_id: userId,
-        current_block: currentBlockId,
-        last_flow_id: flow.id || null,
-        vars: sessionVars,
-        updated_at: new Date().toISOString(),
-      },
-    ]);
+    await supabase.from('sessions').upsert([{
+      user_id: userId,
+      current_block: currentBlockId,
+      last_flow_id: flow.id || null,
+      vars: sessionVars,
+      updated_at: new Date().toISOString(),
+    }]);
   }
 
   let stop = false;
@@ -64,60 +62,59 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-  try {
-    const payload = JSON.parse(
-      substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-    );
-    const url = substituteVariables(block.url, sessionVars);
+          try {
+            const payload = JSON.parse(
+              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+            );
+            const url = substituteVariables(block.url, sessionVars);
 
-    console.log(`🌐 Chamando API: ${url}`);
-    console.log(`📦 Payload:`, payload);
+            console.log(`🌐 Chamando API: ${url}`);
+            console.log(`📦 Payload:`, payload);
 
-    const apiRes = await axios({
-      method: block.method || 'GET',
-      url,
-      data: payload,
-    });
+            const apiRes = await axios({
+              method: block.method || 'GET',
+              url,
+              data: payload,
+            });
 
-    console.log('✅ Resposta da API:', apiRes.data);
+            console.log('✅ Resposta da API:', apiRes.data);
 
-    sessionVars.responseStatus = apiRes.status;
-    sessionVars.responseData = apiRes.data;
+            sessionVars.responseStatus = apiRes.status;
+            sessionVars.responseData = apiRes.data;
 
-    if (block.script) {
-      const sandbox = {
-        response: apiRes.data,
-        vars: sessionVars,
-        output: '',
-      };
-      vm.createContext(sandbox);
-      vm.runInContext(block.script, sandbox);
-      response = sandbox.output;
-    } else {
-      response = JSON.stringify(apiRes.data);
-    }
-  } catch (apiErr) {
-    console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
-    console.error('🔁 URL usada:', block.url);
+            if (block.script) {
+              const sandbox = {
+                response: apiRes.data,
+                vars: sessionVars,
+                output: '',
+              };
+              vm.createContext(sandbox);
+              vm.runInContext(block.script, sandbox);
+              response = sandbox.output;
+            } else {
+              response = JSON.stringify(apiRes.data);
+            }
+          } catch (apiErr) {
+            console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
+            console.error('🔁 URL usada:', block.url);
 
-    sessionVars.responseStatus = apiErr?.response?.status || 500;
-    sessionVars.responseData = apiErr?.response?.data || {};
+            sessionVars.responseStatus = apiErr?.response?.status || 500;
+            sessionVars.responseData = apiErr?.response?.data || {};
 
-    if (block.onErrorScript) {
-      const sandbox = {
-        error: apiErr,
-        vars: sessionVars,
-        output: '',
-      };
-      vm.createContext(sandbox);
-      vm.runInContext(block.onErrorScript, sandbox);
-      response = sandbox.output;
-    } else {
-      throw apiErr;
-    }
-  }
-  break;
-
+            if (block.onErrorScript) {
+              const sandbox = {
+                error: apiErr,
+                vars: sessionVars,
+                output: '',
+              };
+              vm.createContext(sandbox);
+              vm.runInContext(block.onErrorScript, sandbox);
+              response = sandbox.output;
+            } else {
+              throw apiErr;
+            }
+          }
+          break;
 
         default:
           response = '[Bloco não reconhecido]';
@@ -140,15 +137,13 @@ export async function processMessage(message, flow, vars, userId) {
       const shouldWait = block.awaitResponse === true;
       const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
-      await supabase.from('sessions').upsert([
-        {
-          user_id: userId,
-          current_block: shouldWait ? currentBlockId : nextBlock,
-          last_flow_id: flow.id || null,
-          vars: sessionVars,
-          updated_at: new Date().toISOString(),
-        },
-      ]);
+      await supabase.from('sessions').upsert([{
+        user_id: userId,
+        current_block: shouldWait ? currentBlockId : nextBlock,
+        last_flow_id: flow.id || null,
+        vars: sessionVars,
+        updated_at: new Date().toISOString(),
+      }]);
 
       if (shouldWait) {
         stop = true;
