@@ -9,6 +9,8 @@ export async function processMessage(message, flow, vars, userId) {
   // Tenta carregar sessão
   let currentBlockId = flow.start;
   let isNewSession = false;
+  let sessionVars = vars;
+
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -17,9 +19,16 @@ export async function processMessage(message, flow, vars, userId) {
 
   if (session?.current_block && flow.blocks[session.current_block]) {
     currentBlockId = session.current_block;
-    vars = { ...vars, ...session.vars };
+    sessionVars = { ...vars, ...session.vars };
   } else {
     isNewSession = true;
+    await supabase.from('sessions').upsert({
+      user_id: userId,
+      current_block: currentBlockId,
+      last_flow_id: flow.id || null,
+      vars: sessionVars,
+      updated_at: new Date().toISOString()
+    });
   }
 
   let response = '';
@@ -29,7 +38,7 @@ export async function processMessage(message, flow, vars, userId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    let content = block.content ? substituteVariables(block.content, vars) : '';
+    let content = block.content ? substituteVariables(block.content, sessionVars) : '';
 
     try {
       switch (block.type) {
@@ -43,17 +52,17 @@ export async function processMessage(message, flow, vars, userId) {
 
         case 'api_call':
           try {
-            const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), vars));
+            const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
             const apiRes = await axios({
               method: block.method || 'GET',
-              url: substituteVariables(block.url, vars),
+              url: substituteVariables(block.url, sessionVars),
               data: payload
             });
-            vars.responseStatus = apiRes.status;
-            vars.responseData = apiRes.data;
+            sessionVars.responseStatus = apiRes.status;
+            sessionVars.responseData = apiRes.data;
 
             if (block.script) {
-              const sandbox = { response: apiRes.data, vars, output: '' };
+              const sandbox = { response: apiRes.data, vars: sessionVars, output: '' };
               vm.createContext(sandbox);
               vm.runInContext(block.script, sandbox);
               response = sandbox.output;
@@ -61,11 +70,11 @@ export async function processMessage(message, flow, vars, userId) {
               response = JSON.stringify(apiRes.data);
             }
           } catch (apiErr) {
-            vars.responseStatus = apiErr?.response?.status || 500;
-            vars.responseData = apiErr?.response?.data || {};
+            sessionVars.responseStatus = apiErr?.response?.status || 500;
+            sessionVars.responseData = apiErr?.response?.data || {};
 
             if (block.onErrorScript) {
-              const sandbox = { error: apiErr, vars, output: '' };
+              const sandbox = { error: apiErr, vars: sessionVars, output: '' };
               vm.createContext(sandbox);
               vm.runInContext(block.onErrorScript, sandbox);
               response = sandbox.output;
@@ -85,7 +94,7 @@ export async function processMessage(message, flow, vars, userId) {
         user_id: userId,
         current_block: nextBlock,
         last_flow_id: flow.id || null,
-        vars,
+        vars: sessionVars,
         updated_at: new Date().toISOString()
       });
       if (updateResult.error) {
@@ -95,23 +104,12 @@ export async function processMessage(message, flow, vars, userId) {
       currentBlockId = nextBlock;
       keepRunning = !block.awaitUserInput;
 
+      // Retorna logo se o bloco atual está esperando input do usuário
+      if (block.awaitUserInput) break;
+
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
-    }
-  }
-
-  if (!currentBlockId) {
-    console.log('🔁 Reiniciando sessão para usuário:', userId);
-    const resetResult = await supabase.from('sessions').upsert({
-      user_id: userId,
-      current_block: flow.start,
-      last_flow_id: flow.id || null,
-      vars,
-      updated_at: new Date().toISOString()
-    });
-    if (resetResult.error) {
-      console.error('❌ Erro ao resetar sessão:', resetResult.error);
     }
   }
 
