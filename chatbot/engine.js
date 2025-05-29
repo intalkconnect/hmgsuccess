@@ -59,13 +59,22 @@ export async function processMessage(message, flow, vars, userId) {
 
       // Atualiza sessão
       const nextBlock = block.next ?? null;
-      await supabase.from('sessions').upsert({
+      console.log('🔄 Atualizando sessão:', {
+        user_id: userId,
+        current_block: nextBlock,
+        last_flow_id: flow.id || null,
+        vars
+      });
+      const updateResult = await supabase.from('sessions').upsert({
         user_id: userId,
         current_block: nextBlock,
         last_flow_id: flow.id || null,
         vars,
         updated_at: new Date().toISOString()
       });
+      if (updateResult.error) {
+        console.error('❌ Erro ao salvar sessão:', updateResult.error);
+      }
 
       currentBlockId = nextBlock;
     } catch (err) {
@@ -76,13 +85,17 @@ export async function processMessage(message, flow, vars, userId) {
 
   // Se terminou o fluxo, reseta a sessão para começar do início na próxima mensagem
   if (!currentBlockId) {
-    await supabase.from('sessions').upsert({
+    console.log('🔁 Reiniciando sessão para usuário:', userId);
+    const resetResult = await supabase.from('sessions').upsert({
       user_id: userId,
       current_block: flow.start,
       last_flow_id: flow.id || null,
       vars,
       updated_at: new Date().toISOString()
     });
+    if (resetResult.error) {
+      console.error('❌ Erro ao resetar sessão:', resetResult.error);
+    }
   }
 
   return response;
