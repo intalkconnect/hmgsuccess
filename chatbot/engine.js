@@ -1,3 +1,4 @@
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
 import axios from 'axios';
@@ -86,7 +87,17 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      if (response) responses.push(response);
+      if (response) {
+  try {
+    await sendWhatsappMessage({
+      to: userId,
+      type: 'text',
+      content: { body: response },
+    });
+  } catch (err) {
+    console.error('Erro ao enviar mensagem via WhatsApp:', err?.response?.data || err.message);
+  }
+}
 
       const nextBlock = block.next ?? null;
       const shouldWait = block.awaitResponse === true;
