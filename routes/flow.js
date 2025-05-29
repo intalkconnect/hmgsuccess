@@ -9,14 +9,22 @@ export default async function flowRoutes(fastify, opts) {
     }
 
     const res = await supabase.from('flows').insert([
-      { data, created_at: new Date().toISOString() }
-    ]);
+      { data: {}, created_at: new Date().toISOString() }
+    ]).select();
 
-    if (res.error) {
-      reply.code(500).send({ error: 'Erro ao salvar fluxo', detail: res.error });
-    } else {
-      reply.send({ message: 'Fluxo publicado com sucesso.' });
+    if (res.error || !res.data?.[0]?.id) {
+      return reply.code(500).send({ error: 'Erro ao salvar fluxo', detail: res.error });
     }
+
+    const insertedId = res.data[0].id;
+    const updatedFlow = { ...data, id: insertedId };
+
+    // Atualiza o fluxo recém-criado com o ID incluído no JSON
+    await supabase.from('flows')
+      .update({ data: updatedFlow })
+      .eq('id', insertedId);
+
+    reply.send({ message: 'Fluxo publicado com sucesso.', id: insertedId });
   });
 
   fastify.get('/sessions/:user_id', async (req, reply) => {
