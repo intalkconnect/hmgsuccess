@@ -11,8 +11,8 @@ export async function processMessage(message, flow, vars, userId) {
 
   let currentBlockId = flow.start;
   let sessionVars = vars;
+  let lastResponse = null;
 
-  // Recupera sessão existente
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -22,18 +22,24 @@ export async function processMessage(message, flow, vars, userId) {
   if (session?.current_block && flow.blocks[session.current_block]) {
     currentBlockId = session.current_block;
     sessionVars = { ...vars, ...session.vars };
-  } else {
-    await supabase.from('sessions').upsert([{
-      user_id: userId,
-      current_block: currentBlockId,
-      last_flow_id: flow.id || null,
-      vars: sessionVars,
-      updated_at: new Date().toISOString(),
-    }]);
-  }
 
-  if (message) {
-    sessionVars.input = { message };
+    const awaitingBlock = flow.blocks[currentBlockId];
+    if (awaitingBlock.awaitResponse && message) {
+      sessionVars.input = { message };
+      currentBlockId = awaitingBlock.next;
+    } else if (awaitingBlock.awaitResponse && !message) {
+      return null;
+    }
+  } else {
+    await supabase.from('sessions').upsert([
+      {
+        user_id: userId,
+        current_block: currentBlockId,
+        last_flow_id: flow.id || null,
+        vars: sessionVars,
+        updated_at: new Date().toISOString(),
+      },
+    ]);
   }
 
   let stop = false;
@@ -44,7 +50,9 @@ export async function processMessage(message, flow, vars, userId) {
 
     let response = '';
     try {
-      const content = block.content ? substituteVariables(block.content, sessionVars) : '';
+      const content = block.content
+        ? substituteVariables(block.content, sessionVars)
+        : '';
 
       switch (block.type) {
         case 'text':
@@ -57,7 +65,9 @@ export async function processMessage(message, flow, vars, userId) {
 
         case 'api_call':
           try {
-            const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
+            const payload = JSON.parse(
+              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+            );
             const apiRes = await axios({
               method: block.method || 'GET',
               url: substituteVariables(block.url, sessionVars),
@@ -68,7 +78,11 @@ export async function processMessage(message, flow, vars, userId) {
             sessionVars.responseData = apiRes.data;
 
             if (block.script) {
-              const sandbox = { response: apiRes.data, vars: sessionVars, output: '' };
+              const sandbox = {
+                response: apiRes.data,
+                vars: sessionVars,
+                output: '',
+              };
               vm.createContext(sandbox);
               vm.runInContext(block.script, sandbox);
               response = sandbox.output;
@@ -80,7 +94,11 @@ export async function processMessage(message, flow, vars, userId) {
             sessionVars.responseData = apiErr?.response?.data || {};
 
             if (block.onErrorScript) {
-              const sandbox = { error: apiErr, vars: sessionVars, output: '' };
+              const sandbox = {
+                error: apiErr,
+                vars: sessionVars,
+                output: '',
+              };
               vm.createContext(sandbox);
               vm.runInContext(block.onErrorScript, sandbox);
               response = sandbox.output;
@@ -101,6 +119,7 @@ export async function processMessage(message, flow, vars, userId) {
             type: 'text',
             content: { body: response },
           });
+          lastResponse = response;
         } catch (err) {
           console.error('Erro ao enviar mensagem WhatsApp:', err?.response?.data || err.message);
         }
@@ -108,30 +127,31 @@ export async function processMessage(message, flow, vars, userId) {
 
       const nextBlock = block.next ?? null;
       const shouldWait = block.awaitResponse === true;
-      const shouldAutoAdvance = block.awaitResponse !== true && nextBlock;
+      const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
-      // Atualiza sessão
-      await supabase.from('sessions').upsert([{
-        user_id: userId,
-        current_block: shouldWait ? currentBlockId : nextBlock,
-        last_flow_id: flow.id || null,
-        vars: sessionVars,
-        updated_at: new Date().toISOString(),
-      }]);
+      await supabase.from('sessions').upsert([
+        {
+          user_id: userId,
+          current_block: shouldWait ? currentBlockId : nextBlock,
+          last_flow_id: flow.id || null,
+          vars: sessionVars,
+          updated_at: new Date().toISOString(),
+        },
+      ]);
 
       if (shouldWait) {
         stop = true;
-      } else if (shouldAutoAdvance) {
+      } else if (timeout > 0) {
+        await new Promise((resolve) => setTimeout(resolve, timeout * 1000));
         currentBlockId = nextBlock;
       } else {
-        stop = true;
+        currentBlockId = nextBlock;
       }
-
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
     }
   }
 
-  return null;
+  return lastResponse;
 }
