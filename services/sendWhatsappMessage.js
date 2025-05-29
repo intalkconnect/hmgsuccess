@@ -29,7 +29,7 @@ export async function sendWhatsappMessage({ to, type, content }) {
   }
 
   const res = await axios.post(
-    `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    `https://graph.facebook.com/v22.0/${process.env.PHONE_NUMBER_ID}/messages`,
     payload,
     {
       headers: {
