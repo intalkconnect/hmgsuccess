@@ -18,4 +18,40 @@ export default async function flowRoutes(fastify, opts) {
       reply.send({ message: 'Fluxo publicado com sucesso.' });
     }
   });
+
+  fastify.get('/sessions/:user_id', async (req, reply) => {
+    const { user_id } = req.params;
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('user_id', user_id)
+      .single();
+
+    if (error) {
+      reply.code(404).send({ error: 'Sessão não encontrada' });
+    } else {
+      reply.send(data);
+    }
+  });
+
+  fastify.post('/sessions/:user_id', async (req, reply) => {
+    const { user_id } = req.params;
+    const { current_block, flow_id, vars } = req.body;
+
+    const { error } = await supabase
+      .from('sessions')
+      .upsert({
+        user_id,
+        current_block,
+        last_flow_id: flow_id,
+        vars,
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) {
+      reply.code(500).send({ error: 'Erro ao salvar sessão', detail: error });
+    } else {
+      reply.send({ message: 'Sessão salva com sucesso.' });
+    }
+  });
 }
