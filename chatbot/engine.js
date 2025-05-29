@@ -62,59 +62,82 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-          try {
-            const payload = JSON.parse(
-              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-            );
-            const url = substituteVariables(block.url, sessionVars);
+  try {
+    const payload = JSON.parse(
+      substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+    );
+    const url = substituteVariables(block.url, sessionVars);
 
-            console.log(`🌐 Chamando API: ${url}`);
-            console.log(`📦 Payload:`, payload);
+    console.log(`🌐 Chamando API: ${url}`);
+    console.log(`📦 Payload:`, payload);
 
-            const apiRes = await axios({
-              method: block.method || 'GET',
-              url,
-              data: payload,
-            });
+    const apiRes = await axios({
+      method: block.method || 'GET',
+      url,
+      data: payload,
+    });
 
-            console.log('✅ Resposta da API:', apiRes.data);
+    console.log('✅ Resposta da API:', apiRes.data);
 
-            sessionVars.responseStatus = apiRes.status;
-            sessionVars.responseData = apiRes.data;
+    sessionVars.responseStatus = apiRes.status;
+    sessionVars.responseData = apiRes.data;
 
-            if (block.script) {
-              const sandbox = {
-                response: apiRes.data,
-                vars: sessionVars,
-                output: '',
-              };
-              vm.createContext(sandbox);
-              vm.runInContext(block.script, sandbox);
-              response = sandbox.output;
-            } else {
-              response = JSON.stringify(apiRes.data);
-            }
-          } catch (apiErr) {
-            console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
-            console.error('🔁 URL usada:', block.url);
+    if (block.script) {
+      const sandbox = {
+        response: apiRes.data,
+        vars: sessionVars,
+        output: '',
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(block.script, sandbox);
+      response = sandbox.output;
+    } else {
+      response = JSON.stringify(apiRes.data);
+    }
 
-            sessionVars.responseStatus = apiErr?.response?.status || 500;
-            sessionVars.responseData = apiErr?.response?.data || {};
+    // Salva com nomes definidos no fluxo
+    if (block.outputVar && response !== undefined) {
+      sessionVars[block.outputVar] = response;
+    }
+    if (block.statusVar && apiRes.status !== undefined) {
+      sessionVars[block.statusVar] = apiRes.status;
+    }
 
-            if (block.onErrorScript) {
-              const sandbox = {
-                error: apiErr,
-                vars: sessionVars,
-                output: '',
-              };
-              vm.createContext(sandbox);
-              vm.runInContext(block.onErrorScript, sandbox);
-              response = sandbox.output;
-            } else {
-              throw apiErr;
-            }
-          }
-          break;
+  } catch (apiErr) {
+    console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
+    console.error('🔁 URL usada:', block.url);
+
+    const statusCode = apiErr?.response?.status || 500;
+    const errorData = apiErr?.response?.data || {};
+
+    sessionVars.responseStatus = statusCode;
+    sessionVars.responseData = errorData;
+
+    // Salva status em variável personalizada no erro também
+    if (block.statusVar) {
+      sessionVars[block.statusVar] = statusCode;
+    }
+
+    if (block.onErrorScript) {
+      const sandbox = {
+        error: apiErr,
+        vars: sessionVars,
+        output: '',
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(block.onErrorScript, sandbox);
+      response = sandbox.output;
+
+      // Se o erro também gerar resultado customizado
+      if (block.outputVar && response !== undefined) {
+        sessionVars[block.outputVar] = response;
+      }
+    } else {
+      throw apiErr;
+    }
+  }
+  break;
+
 
           case 'script':
   try {
