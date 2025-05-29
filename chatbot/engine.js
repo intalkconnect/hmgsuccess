@@ -4,6 +4,43 @@ import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import axios from 'axios';
 import vm from 'vm';
 
+function evaluateConditions(conditions = [], sessionVars = {}) {
+  for (const condition of conditions) {
+    const { type, variable, value } = condition;
+    const actualValue = sessionVars[variable];
+
+    switch (type) {
+      case 'exists':
+        if (actualValue === undefined || actualValue === null) return false;
+        break;
+      case 'not_exists':
+        if (actualValue !== undefined && actualValue !== null) return false;
+        break;
+      case 'equals':
+        if (actualValue != value) return false;
+        break;
+      case 'not_equals':
+        if (actualValue == value) return false;
+        break;
+      case 'contains':
+        if (!String(actualValue).includes(value)) return false;
+        break;
+      case 'regex':
+        if (!new RegExp(value).test(actualValue)) return false;
+        break;
+      case 'greater_than':
+        if (!(parseFloat(actualValue) > parseFloat(value))) return false;
+        break;
+      case 'less_than':
+        if (!(parseFloat(actualValue) < parseFloat(value))) return false;
+        break;
+      default:
+        return false;
+    }
+  }
+  return true;
+}
+
 export async function processMessage(message, flow, vars, userId) {
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
@@ -62,117 +99,108 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-  try {
-    const payload = JSON.parse(
-      substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-    );
-    const url = substituteVariables(block.url, sessionVars);
+          try {
+            const payload = JSON.parse(
+              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+            );
+            const url = substituteVariables(block.url, sessionVars);
 
-    console.log(`🌐 Chamando API: ${url}`);
-    console.log(`📦 Payload:`, payload);
+            console.log(`🌐 Chamando API: ${url}`);
+            console.log(`📦 Payload:`, payload);
 
-    const apiRes = await axios({
-      method: block.method || 'GET',
-      url,
-      data: payload,
-    });
+            const apiRes = await axios({
+              method: block.method || 'GET',
+              url,
+              data: payload,
+            });
 
-    console.log('✅ Resposta da API:', apiRes.data);
+            console.log('✅ Resposta da API:', apiRes.data);
 
-    sessionVars.responseStatus = apiRes.status;
-    sessionVars.responseData = apiRes.data;
+            sessionVars.responseStatus = apiRes.status;
+            sessionVars.responseData = apiRes.data;
 
-    if (block.script) {
-      const sandbox = {
-        response: apiRes.data,
-        vars: sessionVars,
-        output: '',
-      };
-      vm.createContext(sandbox);
-      vm.runInContext(block.script, sandbox);
-      response = sandbox.output;
-    } else {
-      response = JSON.stringify(apiRes.data);
-    }
+            if (block.script) {
+              const sandbox = {
+                response: apiRes.data,
+                vars: sessionVars,
+                output: '',
+              };
+              vm.createContext(sandbox);
+              vm.runInContext(block.script, sandbox);
+              response = sandbox.output;
+            } else {
+              response = JSON.stringify(apiRes.data);
+            }
 
-    // Salva com nomes definidos no fluxo
-    if (block.outputVar && response !== undefined) {
-      sessionVars[block.outputVar] = response;
-    }
-    if (block.statusVar && apiRes.status !== undefined) {
-      sessionVars[block.statusVar] = apiRes.status;
-    }
+            if (block.outputVar && response !== undefined) {
+              sessionVars[block.outputVar] = response;
+            }
+            if (block.statusVar && apiRes.status !== undefined) {
+              sessionVars[block.statusVar] = apiRes.status;
+            }
 
-  } catch (apiErr) {
-    console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
-    console.error('🔁 URL usada:', block.url);
+          } catch (apiErr) {
+            console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
+            console.error('🔁 URL usada:', block.url);
 
-    const statusCode = apiErr?.response?.status || 500;
-    const errorData = apiErr?.response?.data || {};
+            const statusCode = apiErr?.response?.status || 500;
+            const errorData = apiErr?.response?.data || {};
 
-    sessionVars.responseStatus = statusCode;
-    sessionVars.responseData = errorData;
+            sessionVars.responseStatus = statusCode;
+            sessionVars.responseData = errorData;
 
-    // Salva status em variável personalizada no erro também
-    if (block.statusVar) {
-      sessionVars[block.statusVar] = statusCode;
-    }
+            if (block.statusVar) {
+              sessionVars[block.statusVar] = statusCode;
+            }
 
-    if (block.onErrorScript) {
-      const sandbox = {
-        error: apiErr,
-        vars: sessionVars,
-        output: '',
-      };
-      vm.createContext(sandbox);
-      vm.runInContext(block.onErrorScript, sandbox);
-      response = sandbox.output;
+            if (block.onErrorScript) {
+              const sandbox = {
+                error: apiErr,
+                vars: sessionVars,
+                output: '',
+              };
+              vm.createContext(sandbox);
+              vm.runInContext(block.onErrorScript, sandbox);
+              response = sandbox.output;
 
-      // Se o erro também gerar resultado customizado
-      if (block.outputVar && response !== undefined) {
-        sessionVars[block.outputVar] = response;
-      }
-    } else {
-      throw apiErr;
-    }
-  }
-  break;
+              if (block.outputVar && response !== undefined) {
+                sessionVars[block.outputVar] = response;
+              }
+            } else {
+              throw apiErr;
+            }
+          }
+          break;
 
+        case 'script':
+          try {
+            const sandbox = {
+              vars: sessionVars,
+              output: '',
+            };
 
-          case 'script':
-  try {
-    const sandbox = {
-      vars: sessionVars,
-      output: '',
-    };
+            const fullScript = `
+              ${block.code}
+              output = ${block.function};
+            `;
 
-    // Define e executa a função personalizada
-    const fullScript = `
-      ${block.code}
-      output = ${block.function};
-    `;
+            vm.createContext(sandbox);
+            vm.runInContext(fullScript, sandbox);
 
-    vm.createContext(sandbox);
-    vm.runInContext(fullScript, sandbox);
+            if (block.outputVar && sandbox.output !== undefined) {
+              sessionVars[block.outputVar] = sandbox.output;
+            }
 
-    // Salva o resultado na variável definida
-    if (block.outputVar && sandbox.output !== undefined) {
-      sessionVars[block.outputVar] = sandbox.output;
-    }
-
-    response = sandbox.output?.toString?.() || '';
-  } catch (err) {
-    console.error('❌ Erro ao executar bloco script:', err);
-    response = '⚠️ Erro ao executar script do bot.';
-  }
-  break;
-
+            response = sandbox.output?.toString?.() || '';
+          } catch (err) {
+            console.error('❌ Erro ao executar bloco script:', err);
+            response = '⚠️ Erro ao executar script do bot.';
+          }
+          break;
 
         default:
           response = '[Bloco não reconhecido]';
       }
-
-      
 
       if (response) {
         try {
@@ -187,7 +215,17 @@ export async function processMessage(message, flow, vars, userId) {
         }
       }
 
-      const nextBlock = block.next ?? null;
+      // PRIORITÁRIO: verificar actions encadeadas por ordem
+      let nextBlock = block.next ?? null;
+      if (block.actions && Array.isArray(block.actions)) {
+        for (const action of block.actions) {
+          if (evaluateConditions(action.conditions, sessionVars)) {
+            nextBlock = action.next;
+            break;
+          }
+        }
+      }
+
       const shouldWait = block.awaitResponse === true;
       const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
