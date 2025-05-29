@@ -12,14 +12,14 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
   for (const { type, variable, value } of conditions) {
     const actual = sessionVars[variable];
     switch (type) {
-      case 'exists': if (actual == null) return false; break;
-      case 'not_exists': if (actual != null) return false; break;
-      case 'equals': if (actual != value) return false; break;
-      case 'not_equals': if (actual == value) return false; break;
-      case 'contains': if (!String(actual).includes(value)) return false; break;
-      case 'regex': if (!new RegExp(value).test(actual)) return false; break;
+      case 'exists':       if (actual == null) return false; break;
+      case 'not_exists':   if (actual != null) return false; break;
+      case 'equals':       if (actual != value) return false; break;
+      case 'not_equals':   if (actual == value) return false; break;
+      case 'contains':     if (!String(actual).includes(value)) return false; break;
+      case 'regex':        if (!new RegExp(value).test(actual)) return false; break;
       case 'greater_than': if (!(parseFloat(actual) > parseFloat(value))) return false; break;
-      case 'less_than': if (!(parseFloat(actual) < parseFloat(value))) return false; break;
+      case 'less_than':    if (!(parseFloat(actual) < parseFloat(value))) return false; break;
       default: return false;
     }
   }
@@ -27,13 +27,21 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 /**
- * Envia mensagem pelo canal apropriado sem typing indicator
+ * Envia mensagem pelo canal apropriado
  */
-async function sendMessageByChannel(channel, to, type, content) {
+async function sendMessageByChannel(channel, to, type, content, messageId) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
-  // Whatsapp Cloud API
+  // WhatsApp Cloud API
+  // exibe read+typing antes de enviar
+  if (messageId) {
+    try {
+      await markAsReadAndTyping(messageId);
+    } catch (e) {
+      console.error('typing indicator erro:', e);
+    }
+  }
   let payloadContent = content;
   if (type === 'text' && typeof content === 'string') {
     payloadContent = { body: content };
@@ -69,9 +77,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // Se aguardando resposta, processa input do usuário
+    // 1) Se aguardando resposta, processa e avança imediatamente
     if (block.awaitResponse && message != null && session?.current_block === currentBlockId) {
-      // usuário respondeu, escolhe próximo bloco
       sessionVars.lastUserMessage = message;
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
@@ -79,23 +86,17 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
         }
       }
-      // atualiza sessão com novo bloco
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: currentBlockId,
-        vars: sessionVars,
         last_flow_id: flow.id || null,
+        vars: sessionVars,
         updated_at: new Date().toISOString()
       }]);
-      // continua o processamento no novo bloco, sem esperar nova entrada
       continue;
     }
 
-    }
-    }
-    }
-
-    // Prepara conteúdo do bloco
+    // 2) Prepara conteúdo do bloco
     let content = '';
     if (block.content != null) {
       content = typeof block.content === 'string'
@@ -103,11 +104,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
         : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
     }
 
-    // Executa blocos especiais
+    // 3) Executa blocos especiais (api_call / script)
     if (block.type === 'api_call') {
       const url = substituteVariables(block.url, sessionVars);
-      const bodyPayload = JSON.parse(substituteVariables(JSON.stringify(block.body||{}), sessionVars));
-      const res = await axios({ method: block.method||'GET', url, data: bodyPayload });
+      const payload = JSON.parse(substituteVariables(JSON.stringify(block.body||{}), sessionVars));
+      const res = await axios({ method: block.method||'GET', url, data: payload });
       sessionVars.responseStatus = res.status;
       sessionVars.responseData = res.data;
       if (block.script) {
@@ -129,59 +130,62 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
     }
 
-    // Typing indicator imediato para WhatsApp
-    if (sessionVars.channel === 'whatsapp' && sessionVars.lastMessageId) {
-      markAsReadAndTyping(sessionVars.lastMessageId).catch(err => console.error('typing erro:', err));
-    }
-
-    // Atraso antes de envio: sendDelayInSeconds
+    // 4) Atraso antes de envio: sendDelayInSeconds
     const sendDelay = parseInt(block.sendDelayInSeconds||'0',10);
-    if (sendDelay>0) await new Promise(r=>setTimeout(r,sendDelay*1000));
+    if (sendDelay > 0) await new Promise(r => setTimeout(r, sendDelay * 1000));
 
-    // Envia mensagem
+    // 5) Envia a mensagem pelo canal
     if (content && validTypes.includes(block.type)) {
       try {
         await sendMessageByChannel(
-          sessionVars.channel||'whatsapp',
+          sessionVars.channel || 'whatsapp',
           userId,
           block.type,
-          content
+          content,
+          sessionVars.lastMessageId
         );
         lastResponse = content;
-      } catch(err) {
-        console.error('Erro no envio:',err);
-        const fallback = typeof content==='object'&&content.url?`Conteúdo: ${content.url}`:`${content}`;
+      } catch (err) {
+        console.error('Erro no envio:', err);
+        const fb = typeof content==='object' && content.url ? `Conteúdo: ${content.url}` : content;
         await sendMessageByChannel(
-          sessionVars.channel||'whatsapp',
+          sessionVars.channel || 'whatsapp',
           userId,
           'text',
-          fallback
+          fb,
+          sessionVars.lastMessageId
         );
-        lastResponse = fallback;
+        lastResponse = fb;
       }
     }
 
-    // Atraso após envio e antes de continuar: awaitTimeInSeconds
+    // 6) Atraso após envio e antes de avançar: awaitTimeInSeconds
     const contDelay = parseInt(block.awaitTimeInSeconds||'0',10);
-    if (!block.awaitResponse && contDelay>0) await new Promise(r=>setTimeout(r,contDelay*1000));
+    if (!block.awaitResponse && contDelay > 0) await new Promise(r => setTimeout(r, contDelay * 1000));
 
-    // Escolhe próximo bloco via actions ou sequência padrão
+    // 7) Determina próximo bloco por ações ou default
     let nextBlock = null;
-    for(const action of block.actions||[]) {
-      if(evaluateConditions(action.conditions, sessionVars)) { nextBlock = action.next; break; }
+    for (const action of block.actions || []) {
+      if (evaluateConditions(action.conditions, sessionVars)) {
+        nextBlock = action.next;
+        break;
+      }
     }
-    if(!nextBlock && !block.awaitResponse) nextBlock = block.next || null;
+    if (!nextBlock && !block.awaitResponse) {
+      nextBlock = block.next || null;
+    }
 
-    // Atualiza sessão
+    // 8) Atualiza sessão
     await supabase.from('sessions').upsert([{
       user_id: userId,
-      current_block: block.awaitResponse?currentBlockId:nextBlock,
-      last_flow_id: flow.id||null,
+      current_block: block.awaitResponse ? currentBlockId : nextBlock,
+      last_flow_id: flow.id || null,
       vars: sessionVars,
       updated_at: new Date().toISOString()
     }]);
 
-    if(block.awaitResponse) break;
+    // 9) Se bloco aguarda input, sai; senão avança
+    if (block.awaitResponse) break;
     currentBlockId = nextBlock;
   }
 
