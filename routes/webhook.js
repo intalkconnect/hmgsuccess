@@ -45,7 +45,7 @@ export default async function webhookRoutes(fastify, opts) {
         now: new Date().toISOString(),
       };
 
-      const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars);
+      const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars, from);
       console.log(`🤖 Resposta do bot:`, botResponse);
 
       await supabase.from('messages').insert([
