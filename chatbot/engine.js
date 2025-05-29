@@ -1,6 +1,7 @@
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
-import { sendWhatsappMessage, uploadMediaToWhatsapp } from '../services/sendWhatsappMessage.js';
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+import { uploadMediaToWhatsapp } from '../services/uploadMediaToWhatsapp.js';
 import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
