@@ -6,16 +6,11 @@ export async function dispatchMessage(channel, to, type, content, messageId) {
     return sendWebchatMessage({ to, content });
   }
 
-  // Ajuste para montagem correta de payload text
+  // Ajuste para payload de texto
   let messageContent = content;
   if (type === 'text' && typeof content === 'string') {
     messageContent = { body: content };
   }
 
-  return sendWhatsappMessage({
-    to,
-    type,
-    content: messageContent,
-    messageId
-  });
+  return sendWhatsappMessage({ to, type, content: messageContent, messageId });
 }
