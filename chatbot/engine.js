@@ -5,10 +5,8 @@ import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
 
-/**
- * Avalia condições de ação no bloco
- */
-function evaluateConditions(conditions = [], sessionVars = {}) {
+// Avalia condições de ação no bloco
+default function evaluateConditions(conditions = [], sessionVars = {}) {
   for (const { type, variable, value } of conditions) {
     const actual = sessionVars[variable];
     switch (type) {
@@ -26,9 +24,7 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
   return true;
 }
 
-/**
- * Envia mensagem pelo canal apropriado, marcando read+typing no WhatsApp
- */
+// Envia mensagem pelo canal apropriado, marcando read+typing no WhatsApp
 async function sendMessageByChannel(channel, to, type, content, messageId) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
@@ -48,9 +44,7 @@ async function sendMessageByChannel(channel, to, type, content, messageId) {
   return sendWhatsappMessage({ to, type, content: payloadContent });
 }
 
-/**
- * Processa a mensagem de entrada de acordo com o flow definido
- */
+// Processa a mensagem de entrada de acordo com o flow definido
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
   if (!flow || !flow.blocks || !flow.start) {
@@ -72,7 +66,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-            // 1) Se já tinha sessão e o bloco aguarda resposta, processa input do usuário e avança
+    // 1) Se já tinha sessão e o bloco aguarda resposta, processa input do usuário e avança
     if (session && block.awaitResponse && message != null) {
       sessionVars.lastUserMessage = message;
       for (const action of block.actions || []) {
@@ -81,18 +75,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
         }
       }
-      await supabase.from('sessions').upsert([{
-        user_id: userId,
-        current_block: currentBlockId,
-        vars: sessionVars,
-        last_flow_id: flow.id || null,
-        updated_at: new Date().toISOString()
-      }]);
+      // Atualiza sessão e continua loop para novo bloco
+      await supabase.from('sessions').upsert([{ user_id: userId, current_block: currentBlockId, vars: sessionVars, last_flow_id: flow.id || null, updated_at: new Date().toISOString() }]);
       continue;
     }
-    }
 
-    // 2) Prepara conteúdo
+    // 2) Prepara conteúdo do bloco
     let content = '';
     if (block.content != null) {
       content = typeof block.content === 'string'
@@ -100,11 +88,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
         : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
     }
 
-    // 3) Executa api_call ou script
+    // 3) Executa blocos especiais (api_call / script)
     if (block.type === 'api_call') {
       const url = substituteVariables(block.url, sessionVars);
-      const bodyPayload = JSON.parse(substituteVariables(JSON.stringify(block.body||{}), sessionVars));
-      const res = await axios({ method: block.method||'GET', url, data: bodyPayload });
+      const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
+      const res = await axios({ method: block.method || 'GET', url, data: payload });
       sessionVars.responseStatus = res.status;
       sessionVars.responseData = res.data;
       if (block.script) {
@@ -127,14 +115,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
     }
 
     // 4) Atraso antes de enviar mensagem (sendDelayInSeconds)
-    const sendDelay = parseInt(block.sendDelayInSeconds||'0',10);
-    if (sendDelay > 0) await new Promise(r => setTimeout(r, sendDelay*1000));
+    const sendDelay = parseInt(block.sendDelayInSeconds || '0', 10);
+    if (sendDelay > 0) await new Promise(r => setTimeout(r, sendDelay * 1000));
 
     // 5) Envia mensagem (text, media, location, interactive)
     if (content && validTypes.includes(block.type)) {
       try {
         await sendMessageByChannel(
-          sessionVars.channel||'whatsapp',
+          sessionVars.channel || 'whatsapp',
           userId,
           block.type,
           content,
@@ -143,11 +131,9 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       } catch (err) {
         console.error('Erro no envio:', err);
-        const fallback = typeof content==='object' && content.url
-          ? `Conteúdo: ${content.url}`
-          : `${content}`;
+        const fallback = typeof content === 'object' && content.url ? `Conteúdo: ${content.url}` : `${content}`;
         await sendMessageByChannel(
-          sessionVars.channel||'whatsapp',
+          sessionVars.channel || 'whatsapp',
           userId,
           'text',
           fallback,
@@ -158,8 +144,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
     }
 
     // 6) Atraso após envio e antes de continuar (awaitTimeInSeconds)
-    const contDelay = parseInt(block.awaitTimeInSeconds||'0',10);
-    if (!block.awaitResponse && contDelay > 0) await new Promise(r => setTimeout(r, contDelay*1000));
+    const contDelay = parseInt(block.awaitTimeInSeconds || '0', 10);
+    if (!block.awaitResponse && contDelay > 0) await new Promise(r => setTimeout(r, contDelay * 1000));
 
     // 7) Próximo bloco por ação ou default
     let nextBlock = null;
@@ -169,23 +155,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
         break;
       }
     }
-    if (!nextBlock && !block.awaitResponse) {
-      nextBlock = block.next || null;
-    }
+    if (!nextBlock && !block.awaitResponse) nextBlock = block.next || null;
 
     // 8) Atualiza sessão
-    await supabase.from('sessions').upsert([{
-      user_id: userId,
-      current_block: block.awaitResponse ? currentBlockId : nextBlock,
-      last_flow_id: flow.id||null,
-      vars: sessionVars,
-      updated_at: new Date().toISOString()
-    }]);
+    await supabase.from('sessions').upsert([{ user_id: userId, current_block: block.awaitResponse ? currentBlockId : nextBlock, last_flow_id: flow.id || null, vars: sessionVars, updated_at: new Date().toISOString() }]);
 
-        // 9) Se bloco aguarda input, retorna a última resposta para pausar o loop
-    if (block.awaitResponse) {
-      return lastResponse;
-    }
+    // 9) Se bloco aguarda input, pausa e retorna a última resposta
+    if (block.awaitResponse) return lastResponse;
+
+    // Avança para o próximo bloco
     currentBlockId = nextBlock;
   }
 
