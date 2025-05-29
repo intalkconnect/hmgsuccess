@@ -11,7 +11,7 @@ export async function processMessage(message, flow, vars, userId) {
   let currentBlockId = flow.start;
   let sessionVars = vars;
 
-  // Recupera sessão
+  // 🔁 Recupera sessão anterior
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -31,20 +31,20 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  // Atualiza input com a nova mensagem recebida
+  // 🟡 Armazena a mensagem recebida como input
   sessionVars.input = { message };
 
   let stop = false;
+  let lastResponse = null;
 
   while (currentBlockId && !stop) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
     let response = '';
+    const content = block.content ? substituteVariables(block.content, sessionVars) : '';
 
     try {
-      const content = block.content ? substituteVariables(block.content, sessionVars) : '';
-
       switch (block.type) {
         case 'text':
         case 'image':
@@ -92,41 +92,34 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      // Envia mensagem para WhatsApp
+      // ✅ Envia resposta via WhatsApp
       if (response) {
         await sendWhatsappMessage({
           to: userId,
           type: 'text',
           content: { body: response },
         });
+        lastResponse = response;
       }
 
       const shouldWait = block.awaitResponse === true;
       const nextBlock = block.next ?? null;
 
-      if (shouldWait) {
-        // Salva a sessão e para execução aguardando nova entrada
-        await supabase.from('sessions').upsert({
-          user_id: userId,
-          current_block: currentBlockId,
-          last_flow_id: flow.id || null,
-          vars: sessionVars,
-          updated_at: new Date().toISOString()
-        });
-        stop = true;
-        break;
-      }
-
-      // Caso contrário, avança normalmente
-      currentBlockId = nextBlock;
-
+      // 🔁 Atualiza sessão e para se necessário
       await supabase.from('sessions').upsert({
         user_id: userId,
-        current_block: currentBlockId,
+        current_block: shouldWait ? currentBlockId : nextBlock,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString()
       });
+
+      if (shouldWait) {
+        stop = true;
+        break;
+      }
+
+      currentBlockId = nextBlock;
 
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
@@ -134,5 +127,5 @@ export async function processMessage(message, flow, vars, userId) {
     }
   }
 
-  return null;
+  return lastResponse;
 }
