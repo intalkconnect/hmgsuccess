@@ -89,11 +89,12 @@ export async function processMessage(message, flow, vars, userId) {
       if (response) responses.push(response);
 
       const nextBlock = block.next ?? null;
-      const awaitTime = parseInt(block.awaitTimeInSeconds || '0', 10);
+      const shouldWait = block.awaitResponse === true;
+      const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
       const updateResult = await supabase.from('sessions').upsert({
         user_id: userId,
-        current_block: nextBlock,
+        current_block: shouldWait ? currentBlockId : nextBlock,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString()
@@ -102,11 +103,13 @@ export async function processMessage(message, flow, vars, userId) {
         console.error('❌ Erro ao salvar sessão:', updateResult.error);
       }
 
-      if (awaitTime > 0) {
-        await new Promise((resolve) => setTimeout(resolve, awaitTime * 1000));
-        currentBlockId = nextBlock;
-      } else if (awaitTime === 0) {
-        stop = true;
+      if (shouldWait) {
+        if (timeout > 0) {
+          await new Promise((resolve) => setTimeout(resolve, timeout * 1000));
+          currentBlockId = nextBlock;
+        } else {
+          stop = true;
+        }
       } else {
         currentBlockId = nextBlock;
       }
