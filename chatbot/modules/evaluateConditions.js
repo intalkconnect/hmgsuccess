@@ -1,6 +1,6 @@
-export function evaluateConditions(conditions = [], sessionVars = {}) {
+export function evaluateConditions(conditions = [], vars = {}) {
   for (const { type, variable, value } of conditions) {
-    const actual = sessionVars[variable];
+    const actual = vars[variable];
     switch (type) {
       case 'exists':
         if (actual == null) return false;
