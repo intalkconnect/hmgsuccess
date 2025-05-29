@@ -15,7 +15,6 @@ const {
  * 2) Chama Graph API para marcar como lida + typing indicator
  */
 async function markAsReadAndTyping(to) {
-  // supomos que você gravou last_whatsapp_message_id na tabela sessions
   const { data: session } = await supabase
     .from('sessions')
     .select('last_whatsapp_message_id')
@@ -42,14 +41,15 @@ async function markAsReadAndTyping(to) {
 }
 
 export async function sendWhatsappMessage({ to, type, content }) {
-  // 🚨 antes de enviar: marca como lida + typing indicator
+  // 🚨 Antes de montar o payload, dispara read+typing
   try {
     await markAsReadAndTyping(to);
+    console.log(`✓ markAsReadAndTyping enviado para ${to}`);
   } catch (err) {
     console.error('❌ erro no read+typing:', err.response?.data || err.message);
   }
 
-  // 2) monta o payload normal
+  // Monta o payload normal
   const payload = {
     messaging_product: 'whatsapp',
     to,
@@ -73,17 +73,21 @@ export async function sendWhatsappMessage({ to, type, content }) {
     payload[type] = content;
   }
 
-  // 3) envia a mensagem real
-  const res = await axios.post(
-    `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-    payload,
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-    }
-  );
-
-  return res.data;
+  // Envia a mensagem real pelo Graph API
+  try {
+    const res = await axios.post(
+      `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+      }
+    );
+    return res.data;
+  } catch (err) {
+    console.error('❌ erro ao enviar mensagem:', err.response?.data || err.message);
+    throw err;
+  }
 }
