@@ -6,7 +6,6 @@ import vm from 'vm';
 export async function processMessage(message, flow, vars, userId) {
   if (!flow || !flow.blocks || !flow.start) return flow?.onError?.content || 'Erro interno no bot';
 
-  // Tenta carregar sessão
   let currentBlockId = flow.start;
   let isNewSession = false;
   let sessionVars = vars;
@@ -31,7 +30,7 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  let response = '';
+  let accumulatedResponses = [];
   let keepRunning = true;
 
   while (currentBlockId && keepRunning) {
@@ -41,6 +40,8 @@ export async function processMessage(message, flow, vars, userId) {
     let content = block.content ? substituteVariables(block.content, sessionVars) : '';
 
     try {
+      let response = '';
+
       switch (block.type) {
         case 'text':
         case 'image':
@@ -89,6 +90,15 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
+      if (response) {
+        accumulatedResponses.push(response);
+      }
+
+      const delaySeconds = parseInt(block.delayInSeconds || '0', 10);
+      if (delaySeconds > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
+      }
+
       const nextBlock = block.next ?? null;
       const updateResult = await supabase.from('sessions').upsert({
         user_id: userId,
@@ -101,11 +111,19 @@ export async function processMessage(message, flow, vars, userId) {
         console.error('❌ Erro ao salvar sessão:', updateResult.error);
       }
 
-      currentBlockId = nextBlock;
-      keepRunning = !block.awaitUserInput;
+      if ('awaitUserInput' in block && block.awaitUserInput === true) {
+        const waitTime = parseInt(block.awaitTimeInSeconds || '0', 10);
+        if (waitTime > 0) {
+          await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
+          currentBlockId = nextBlock;
+        } else {
+          break;
+        }
+      } else {
+        currentBlockId = nextBlock;
+      }
 
-      // Retorna logo se o bloco atual está esperando input do usuário
-      if (block.awaitUserInput) break;
+      keepRunning = true;
 
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
@@ -113,5 +131,5 @@ export async function processMessage(message, flow, vars, userId) {
     }
   }
 
-  return response;
+  return accumulatedResponses.join('\n\n');
 }
