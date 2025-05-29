@@ -1,8 +1,6 @@
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import { processMessage } from '../chatbot/engine.js';
 import { supabase } from '../services/db.js';
+import { processMessage } from '../chatbot/engine.js';
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
@@ -23,18 +21,30 @@ export default async function webhookRoutes(fastify, opts) {
     fastify.log.info('Mensagem recebida:', body);
 
     const messages = body.entry?.[0]?.changes?.[0]?.value?.messages;
-    const from = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.wa_id;
-    const timestamp = messages?.[0]?.timestamp;
+    const contact = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
+    const from = contact?.wa_id;
+    const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
       const msgBody = messages[0].text?.body || '';
       console.log(`🧾 Mensagem recebida de ${from}:`, msgBody);
 
-      const flowPath = path.resolve('flows', 'example.json');
-      const rawFlow = fs.readFileSync(flowPath);
-      const flow = JSON.parse(rawFlow);
+      // Buscar o último fluxo publicado
+      const { data: latestFlow } = await supabase
+        .from('flows')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
 
-      const botResponse = processMessage(msgBody.toLowerCase(), flow);
+      const vars = {
+        userPhone: from,
+        userName: profileName,
+        userMessage: msgBody,
+        now: new Date().toISOString(),
+      };
+
+      const botResponse = processMessage(msgBody.toLowerCase(), latestFlow?.data, vars);
       console.log(`🤖 Resposta do bot:`, botResponse);
 
       await supabase.from('messages').insert([
@@ -49,7 +59,7 @@ export default async function webhookRoutes(fastify, opts) {
       try {
         await fastify.inject({
           method: 'POST',
-          url: '/messages/send',
+          url: `/messages/send`,
           payload: {
             to: from,
             type: 'text',
