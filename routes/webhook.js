@@ -19,6 +19,15 @@ export default async function webhookRoutes(fastify, opts) {
   // Processamento das mensagens recebidas
   fastify.post('/', async (req, reply) => {
     const body = req.body;
+
+    // Ignora eventos de status (para evitar poluir o log)
+    const hasStatusesOnly = !!body.entry?.[0]?.changes?.[0]?.value?.statuses;
+    const hasMessages = !!body.entry?.[0]?.changes?.[0]?.value?.messages;
+
+    if (!hasMessages || hasStatusesOnly) {
+      return reply.code(200).send('EVENT_RECEIVED');
+    }
+
     console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
 
     const messages = body.entry?.[0]?.changes?.[0]?.value?.messages;
