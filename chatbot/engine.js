@@ -8,6 +8,7 @@ export async function processMessage(message, flow, vars, userId) {
 
   // Tenta carregar sessão
   let currentBlockId = flow.start;
+  let isNewSession = false;
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -17,11 +18,14 @@ export async function processMessage(message, flow, vars, userId) {
   if (session?.current_block && flow.blocks[session.current_block]) {
     currentBlockId = session.current_block;
     vars = { ...vars, ...session.vars };
+  } else {
+    isNewSession = true;
   }
 
   let response = '';
+  let keepRunning = true;
 
-  while (currentBlockId) {
+  while (currentBlockId && keepRunning) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
@@ -38,19 +42,37 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-          const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), vars));
-          const apiRes = await axios({
-            method: block.method || 'GET',
-            url: substituteVariables(block.url, vars),
-            data: payload
-          });
-          if (block.script) {
-            const sandbox = { response: apiRes.data, vars, output: '' };
-            vm.createContext(sandbox);
-            vm.runInContext(block.script, sandbox);
-            response = sandbox.output;
-          } else {
-            response = JSON.stringify(apiRes.data);
+          try {
+            const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), vars));
+            const apiRes = await axios({
+              method: block.method || 'GET',
+              url: substituteVariables(block.url, vars),
+              data: payload
+            });
+            vars.responseStatus = apiRes.status;
+            vars.responseData = apiRes.data;
+
+            if (block.script) {
+              const sandbox = { response: apiRes.data, vars, output: '' };
+              vm.createContext(sandbox);
+              vm.runInContext(block.script, sandbox);
+              response = sandbox.output;
+            } else {
+              response = JSON.stringify(apiRes.data);
+            }
+          } catch (apiErr) {
+            vars.responseStatus = apiErr?.response?.status || 500;
+            vars.responseData = apiErr?.response?.data || {};
+
+            if (block.onErrorScript) {
+              const sandbox = { error: apiErr, vars, output: '' };
+              vm.createContext(sandbox);
+              vm.runInContext(block.onErrorScript, sandbox);
+              response = sandbox.output;
+              break;
+            }
+
+            throw apiErr;
           }
           break;
 
@@ -58,14 +80,7 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      // Atualiza sessão
       const nextBlock = block.next ?? null;
-      console.log('🔄 Atualizando sessão:', {
-        user_id: userId,
-        current_block: nextBlock,
-        last_flow_id: flow.id || null,
-        vars
-      });
       const updateResult = await supabase.from('sessions').upsert({
         user_id: userId,
         current_block: nextBlock,
@@ -78,13 +93,14 @@ export async function processMessage(message, flow, vars, userId) {
       }
 
       currentBlockId = nextBlock;
+      keepRunning = !block.awaitUserInput;
+
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
     }
   }
 
-  // Se terminou o fluxo, reseta a sessão para começar do início na próxima mensagem
   if (!currentBlockId) {
     console.log('🔁 Reiniciando sessão para usuário:', userId);
     const resetResult = await supabase.from('sessions').upsert({
