@@ -43,7 +43,7 @@ export default async function messageRoutes(fastify, opts) {
 
     try {
       const res = await axios.post(
-        "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages",
+        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/messages",
         payload,
         {
           headers: {
@@ -75,7 +75,7 @@ export default async function messageRoutes(fastify, opts) {
 
     try {
       const res = await axios.post(
-        "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages",
+        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/messages",
         payload,
         {
           headers: {
@@ -94,7 +94,7 @@ export default async function messageRoutes(fastify, opts) {
   fastify.get("/templates", async (req, reply) => {
     try {
       const res = await axios.get(
-        "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/message_templates",
+        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/message_templates",
         {
           headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
