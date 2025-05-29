@@ -1,18 +1,35 @@
-// services/sendWhatsappMessage.js
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { uploadMediaToWhatsapp } from './wa/uploadMediaToWhatsapp.js';
 dotenv.config();
 
 export async function sendWhatsappMessage({ to, type, content }) {
-  const payload = {
+  let payload = {
     messaging_product: 'whatsapp',
     to,
     type,
-    [type]: content,
   };
 
+  // Tratamento especial para tipos com upload
+  if (['image', 'audio', 'video', 'document'].includes(type)) {
+    const mediaId = await uploadMediaToWhatsapp(content.url, type);
+    payload[type] = {
+      id: mediaId,
+      caption: content.caption || undefined,
+    };
+  } else if (type === 'location') {
+    payload[type] = {
+      latitude: content.latitude,
+      longitude: content.longitude,
+      name: content.name,
+      address: content.address,
+    };
+  } else {
+    payload[type] = content;
+  }
+
   const res = await axios.post(
-    `https://graph.facebook.com/v22.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
     payload,
     {
       headers: {
