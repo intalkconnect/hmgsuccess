@@ -83,9 +83,21 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
     const awaitingBlock = flow.blocks[currentBlockId];
     if (awaitingBlock.awaitResponse && message) {
-      sessionVars.lastUserMessage = message;
-      currentBlockId = awaitingBlock.next;
-    } else if (awaitingBlock.awaitResponse && !message) {
+  sessionVars.lastUserMessage = message;
+
+  let nextBlock = awaitingBlock.next ?? null;
+
+  if (awaitingBlock.actions && Array.isArray(awaitingBlock.actions)) {
+    for (const action of awaitingBlock.actions) {
+      if (evaluateConditions(action.conditions, sessionVars)) {
+        nextBlock = action.next;
+        break;
+      }
+    }
+  }
+
+  currentBlockId = nextBlock;
+} else if (awaitingBlock.awaitResponse && !message) {
       return null;
     }
   } else {
