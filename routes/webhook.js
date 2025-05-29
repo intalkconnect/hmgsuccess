@@ -107,7 +107,8 @@ export default async function webhookRoutes(fastify, opts) {
             created_at:          new Date().toISOString(),
           },
         ]);
-
+}
     reply.code(200).send('EVENT_RECEIVED');
-  });
+  }); // <- fecha fastify.post
+
 }
