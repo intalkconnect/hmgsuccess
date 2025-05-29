@@ -70,7 +70,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
   let currentBlockId = session?.current_block || flow.start;
   let sessionVars = session?.vars ? { ...vars, ...session.vars } : { ...vars };
   let lastResponse = null;
-  const validTypes = ['text','image','audio','video','file','document','location'];
+  const validTypes = ['text','image','audio','video','file','document','location','interactive'];
 
   // Loop pelos blocos
   while (currentBlockId) {
