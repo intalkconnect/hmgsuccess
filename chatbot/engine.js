@@ -72,17 +72,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-        // 1) Se aguardando resposta, processa input do usuário e avança
-    if (block.awaitResponse && message != null) {
+            // 1) Se já tinha sessão e o bloco aguarda resposta, processa input do usuário e avança
+    if (session && block.awaitResponse && message != null) {
       sessionVars.lastUserMessage = message;
-      // escolhe próxima ação com base nas condições
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
           break;
         }
       }
-      // grava nova posição na sessão
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: currentBlockId,
@@ -90,8 +88,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
         last_flow_id: flow.id || null,
         updated_at: new Date().toISOString()
       }]);
-      // continua o loop para processar imediatamente o novo bloco
       continue;
+    }
     }
 
     // 2) Prepara conteúdo
