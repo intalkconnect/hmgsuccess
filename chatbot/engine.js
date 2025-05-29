@@ -7,7 +7,6 @@ export async function processMessage(message, flow, vars, userId) {
   if (!flow || !flow.blocks || !flow.start) return flow?.onError?.content || 'Erro interno no bot';
 
   let currentBlockId = flow.start;
-  let isNewSession = false;
   let sessionVars = vars;
 
   const { data: session } = await supabase
@@ -20,7 +19,6 @@ export async function processMessage(message, flow, vars, userId) {
     currentBlockId = session.current_block;
     sessionVars = { ...vars, ...session.vars };
   } else {
-    isNewSession = true;
     await supabase.from('sessions').upsert({
       user_id: userId,
       current_block: currentBlockId,
@@ -30,17 +28,16 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  let accumulatedResponses = [];
-  let keepRunning = true;
+  const responses = [];
+  let stop = false;
 
-  while (currentBlockId && keepRunning) {
+  while (currentBlockId && !stop) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    let content = block.content ? substituteVariables(block.content, sessionVars) : '';
-
+    let response = '';
     try {
-      let response = '';
+      const content = block.content ? substituteVariables(block.content, sessionVars) : '';
 
       switch (block.type) {
         case 'text':
@@ -79,10 +76,9 @@ export async function processMessage(message, flow, vars, userId) {
               vm.createContext(sandbox);
               vm.runInContext(block.onErrorScript, sandbox);
               response = sandbox.output;
-              break;
+            } else {
+              throw apiErr;
             }
-
-            throw apiErr;
           }
           break;
 
@@ -90,16 +86,11 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      if (response) {
-        accumulatedResponses.push(response);
-      }
-
-      const delaySeconds = parseInt(block.delayInSeconds || '0', 10);
-      if (delaySeconds > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
-      }
+      if (response) responses.push(response);
 
       const nextBlock = block.next ?? null;
+      const awaitTime = parseInt(block.awaitTimeInSeconds || '0', 10);
+
       const updateResult = await supabase.from('sessions').upsert({
         user_id: userId,
         current_block: nextBlock,
@@ -111,19 +102,14 @@ export async function processMessage(message, flow, vars, userId) {
         console.error('❌ Erro ao salvar sessão:', updateResult.error);
       }
 
-      if ('awaitUserInput' in block && block.awaitUserInput === true) {
-        const waitTime = parseInt(block.awaitTimeInSeconds || '0', 10);
-        if (waitTime > 0) {
-          await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
-          currentBlockId = nextBlock;
-        } else {
-          break;
-        }
+      if (awaitTime > 0) {
+        await new Promise((resolve) => setTimeout(resolve, awaitTime * 1000));
+        currentBlockId = nextBlock;
+      } else if (awaitTime === 0) {
+        stop = true;
       } else {
         currentBlockId = nextBlock;
       }
-
-      keepRunning = true;
 
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
@@ -131,5 +117,5 @@ export async function processMessage(message, flow, vars, userId) {
     }
   }
 
-  return accumulatedResponses.join('\n\n');
+  return responses.join('\n\n');
 }
