@@ -21,21 +21,11 @@ export async function processMessage(message, flow, vars, userId) {
 
   if (session?.current_block && flow.blocks[session.current_block]) {
     currentBlockId = session.current_block;
-    sessionVars = { ...session.vars, ...vars };
+    sessionVars = { ...vars, ...session.vars };
 
     const awaitingBlock = flow.blocks[currentBlockId];
     if (awaitingBlock.awaitResponse && message) {
-      sessionVars.input = { message };
-
-      // Salva input atualizado imediatamente
-      await supabase.from('sessions').upsert([{
-        user_id: userId,
-        current_block: awaitingBlock.next,
-        last_flow_id: flow.id || null,
-        vars: sessionVars,
-        updated_at: new Date().toISOString(),
-      }]);
-
+      sessionVars.lastUserMessage = message;
       currentBlockId = awaitingBlock.next;
     } else if (awaitingBlock.awaitResponse && !message) {
       return null;
