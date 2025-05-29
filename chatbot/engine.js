@@ -1,6 +1,7 @@
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
 import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
 
@@ -39,6 +40,16 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
     }
   }
   return true;
+}
+
+async function sendMessageByChannel(channel, to, content) {
+  switch (channel) {
+    case 'webchat':
+      return sendWebchatMessage({ to, content });
+    case 'whatsapp':
+    default:
+      return sendWhatsappMessage({ to, type: 'text', content: { body: content } });
+  }
 }
 
 export async function processMessage(message, flow, vars, userId) {
@@ -204,18 +215,13 @@ export async function processMessage(message, flow, vars, userId) {
 
       if (response) {
         try {
-          await sendWhatsappMessage({
-            to: userId,
-            type: 'text',
-            content: { body: response },
-          });
+          await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, response);
           lastResponse = response;
         } catch (err) {
-          console.error('Erro ao enviar mensagem WhatsApp:', err?.response?.data || err.message);
+          console.error('Erro ao enviar mensagem:', err?.response?.data || err.message);
         }
       }
 
-      // PRIORITÁRIO: verificar actions encadeadas por ordem
       let nextBlock = block.next ?? null;
       if (block.actions && Array.isArray(block.actions)) {
         for (const action of block.actions) {
