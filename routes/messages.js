@@ -1,48 +1,32 @@
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import axios from "axios";
 import dotenv from "dotenv";
 dotenv.config();
 
 export default async function messageRoutes(fastify, opts) {
   fastify.post("/send", async (req, reply) => {
-    const { to, type, content } = req.body;
+  const { to, type, content } = req.body;
 
-    const data = {
-      messaging_product: "whatsapp",
-      to,
-      type,
-      [type]: content,
-    };
+  try {
+    const data = await sendWhatsappMessage({ to, type, content });
+    reply.send(data);
+  } catch (err) {
+    const errorData = err.response?.data || err.message;
+    fastify.log.error(errorData);
 
-    try {
-      const res = await axios.post(
-        `https://graph.facebook.com/v22.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        data,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      reply.send(res.data);
-    } catch (err) {
-      const errorData = err.response?.data || err.message;
-      fastify.log.error(errorData);
-
-      // Retorno especial caso janela de 24h esteja fechada
-      if (
-        errorData?.error?.message?.includes("outside the allowed window") ||
-        errorData?.error?.code === 131047
-      ) {
-        reply.code(400).send({
-          error:
-            "Mensagem fora da janela de 24 horas. Envie um template aprovado.",
-        });
-      } else {
-        reply.code(500).send("Erro ao enviar");
-      }
+    if (
+      errorData?.error?.message?.includes("outside the allowed window") ||
+      errorData?.error?.code === 131047
+    ) {
+      reply.code(400).send({
+        error: "Mensagem fora da janela de 24 horas. Envie um template aprovado.",
+      });
+    } else {
+      reply.code(500).send("Erro ao enviar");
     }
-  });
+  }
+});
+
 
   fastify.post("/send/media", async (req, reply) => {
     const { to, mediaType, mediaUrl, caption } = req.body;
