@@ -1,6 +1,6 @@
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import axios from 'axios';
 import vm from 'vm';
 
@@ -29,7 +29,11 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  const responses = [];
+  // 🟡 Salva a mensagem do usuário como input
+  sessionVars.input = {
+    message
+  };
+
   let stop = false;
 
   while (currentBlockId && !stop) {
@@ -87,35 +91,36 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
+      // ✅ Envia a resposta para o WhatsApp
       if (response) {
-  try {
-    await sendWhatsappMessage({
-      to: userId,
-      type: 'text',
-      content: { body: response },
-    });
-  } catch (err) {
-    console.error('Erro ao enviar mensagem via WhatsApp:', err?.response?.data || err.message);
-  }
-}
+        try {
+          await sendWhatsappMessage({
+            to: userId,
+            type: 'text',
+            content: { body: response },
+          });
+        } catch (err) {
+          console.error('Erro ao enviar mensagem WhatsApp:', err?.response?.data || err.message);
+        }
+      }
 
       const nextBlock = block.next ?? null;
       const shouldWait = block.awaitResponse === true;
       const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
 
-      const updateResult = await supabase.from('sessions').upsert({
+      await supabase.from('sessions').upsert({
         user_id: userId,
         current_block: shouldWait ? currentBlockId : nextBlock,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString()
       });
-      if (updateResult.error) {
-        console.error('❌ Erro ao salvar sessão:', updateResult.error);
-      }
 
+      // ✅ Lógica corrigida para avançar se mensagem for recebida
       if (shouldWait) {
-        if (timeout > 0) {
+        if (message) {
+          currentBlockId = nextBlock;
+        } else if (timeout > 0) {
           await new Promise((resolve) => setTimeout(resolve, timeout * 1000));
           currentBlockId = nextBlock;
         } else {
@@ -131,5 +136,5 @@ export async function processMessage(message, flow, vars, userId) {
     }
   }
 
-  return responses.join('\n\n');
+  return null;
 }
