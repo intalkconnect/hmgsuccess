@@ -5,11 +5,13 @@ import axios from 'axios';
 import vm from 'vm';
 
 export async function processMessage(message, flow, vars, userId) {
-  if (!flow || !flow.blocks || !flow.start) return flow?.onError?.content || 'Erro interno no bot';
+  if (!flow || !flow.blocks || !flow.start)
+    return flow?.onError?.content || 'Erro interno no bot';
 
   let currentBlockId = flow.start;
   let sessionVars = vars;
 
+  // Recupera sessão
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -29,10 +31,8 @@ export async function processMessage(message, flow, vars, userId) {
     });
   }
 
-  // 💬 Salva input do usuário na variável input.message
-  sessionVars.input = {
-    message
-  };
+  // Atualiza input com a nova mensagem recebida
+  sessionVars.input = { message };
 
   let stop = false;
 
@@ -41,6 +41,7 @@ export async function processMessage(message, flow, vars, userId) {
     if (!block) break;
 
     let response = '';
+
     try {
       const content = block.content ? substituteVariables(block.content, sessionVars) : '';
 
@@ -91,53 +92,41 @@ export async function processMessage(message, flow, vars, userId) {
           response = '[Bloco não reconhecido]';
       }
 
-      // ✅ Envia a mensagem ao usuário
+      // Envia mensagem para WhatsApp
       if (response) {
-        try {
-          await sendWhatsappMessage({
-            to: userId,
-            type: 'text',
-            content: { body: response },
-          });
-        } catch (err) {
-          console.error('Erro ao enviar mensagem WhatsApp:', err?.response?.data || err.message);
-        }
+        await sendWhatsappMessage({
+          to: userId,
+          type: 'text',
+          content: { body: response },
+        });
       }
 
-      const nextBlock = block.next ?? null;
       const shouldWait = block.awaitResponse === true;
-      const timeout = parseInt(block.awaitTimeInSeconds || '0', 10);
+      const nextBlock = block.next ?? null;
 
-      // 🧠 Decide qual bloco deve ser salvo na sessão
-      let sessionBlock = currentBlockId;
-      if (!shouldWait || (shouldWait && message)) {
-        sessionBlock = nextBlock;
+      if (shouldWait) {
+        // Salva a sessão e para execução aguardando nova entrada
+        await supabase.from('sessions').upsert({
+          user_id: userId,
+          current_block: currentBlockId,
+          last_flow_id: flow.id || null,
+          vars: sessionVars,
+          updated_at: new Date().toISOString()
+        });
+        stop = true;
+        break;
       }
 
-      // 📝 Salva sessão com o bloco correto
-      const { error } = await supabase.from('sessions').upsert({
+      // Caso contrário, avança normalmente
+      currentBlockId = nextBlock;
+
+      await supabase.from('sessions').upsert({
         user_id: userId,
-        current_block: sessionBlock,
+        current_block: currentBlockId,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString()
       });
-
-      if (error) {
-        console.error('❌ Erro ao salvar sessão:', error);
-      }
-
-      // ⏭️ Decide se continua ou para
-      if (shouldWait && !message) {
-        if (timeout > 0) {
-          await new Promise((resolve) => setTimeout(resolve, timeout * 1000));
-          currentBlockId = nextBlock;
-        } else {
-          stop = true;
-        }
-      } else {
-        currentBlockId = nextBlock;
-      }
 
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
