@@ -60,17 +60,28 @@ export async function processMessage(message, flow, vars, userId) {
       // Atualiza sessão
       await supabase.from('sessions').upsert({
         user_id: userId,
-        current_block: block.next || null,
+        current_block: block.next ?? null,
         last_flow_id: flow.id || null,
         vars,
         updated_at: new Date().toISOString()
       });
 
-      currentBlockId = block.next || null;
+      currentBlockId = block.next ?? null;
     } catch (err) {
       console.error('Erro no bloco:', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
     }
+  }
+
+  // Se terminou o fluxo, limpar current_block para recomeçar no próximo input
+  if (!currentBlockId) {
+    await supabase.from('sessions').upsert({
+      user_id: userId,
+      current_block: null,
+      last_flow_id: flow.id || null,
+      vars,
+      updated_at: new Date().toISOString()
+    });
   }
 
   return response;
