@@ -118,9 +118,17 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
     let response = '';
     try {
-      const content = block.content
-        ? substituteVariables(block.content, sessionVars)
-        : '';
+      let content = '';
+if (block.content) {
+  if (typeof block.content === 'string') {
+    content = substituteVariables(block.content, sessionVars);
+  } else if (typeof block.content === 'object') {
+    content = JSON.parse(
+      substituteVariables(JSON.stringify(block.content), sessionVars)
+    );
+  }
+}
+
 
       switch (block.type) {
         case 'text':
