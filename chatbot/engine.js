@@ -69,7 +69,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // Se aguardando resposta, processa input do usuário
+        // Se aguardando resposta, processa input do usuário
     if (block.awaitResponse && message != null && session?.current_block === currentBlockId) {
       // usuário respondeu, escolhe próximo bloco
       sessionVars.lastUserMessage = message;
@@ -89,6 +89,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }]);
       // continua o processamento no novo bloco, sem esperar nova entrada
       continue;
+    }
     }
     }
 
