@@ -1,4 +1,4 @@
-import { substituteVariables } from '../utils/vars.js';
+import { substituteVariables } from '../../utils/vars.js';
 import axios from 'axios';
 import vm from 'vm';
 export async function executeBlock(block, vars, message) {
