@@ -4,24 +4,6 @@ import { processMessage } from '../chatbot/engine.js';
 import axios from 'axios';
 dotenv.config();
 
-/**
- * Chama a API do WhatsApp para marcar uma mensagem como lida.
- */
-async function markAsRead(phoneNumberId, accessToken, whatsappMessageId) {
-  const url = `https://graph.facebook.com/${process.env.API_VERSION}/${phoneNumberId}/messages`;
-  const payload = {
-    messaging_product: "whatsapp",
-    status: "read",
-    message_id: whatsappMessageId
-  };
-  await axios.post(url, payload, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    }
-  });
-}
-
 export default async function webhookRoutes(fastify, opts) {
   // Verificação do Webhook
   fastify.get('/', async (req, reply) => {
@@ -125,16 +107,6 @@ export default async function webhookRoutes(fastify, opts) {
             created_at:          new Date().toISOString(),
           },
         ]);
-
-      // Marca a mensagem como lida no WhatsApp (fire-and-forget)
-      markAsRead(
-        process.env.PHONE_NUMBER_ID,
-        process.env.WHATSAPP_TOKEN,
-        msgId
-      ).catch(err => console.error('❌ markAsRead erro:', err));
-    } else {
-      console.log('⚠️ Nenhuma mensagem ou remetente identificado no payload.');
-    }
 
     reply.code(200).send('EVENT_RECEIVED');
   });
