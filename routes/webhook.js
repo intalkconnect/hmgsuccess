@@ -1,11 +1,10 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
 import { processMessage } from '../chatbot/engine.js';
-import { substituteVariables } from '../utils/vars.js';
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
-  // Verificação do Webhook (GET)
+  // Verificação do Webhook
   fastify.get('/', async (req, reply) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -17,11 +16,10 @@ export default async function webhookRoutes(fastify, opts) {
     return reply.code(403).send('Forbidden');
   });
 
-  // Recebimento de mensagens (POST)
+  // Processamento das mensagens recebidas
   fastify.post('/', async (req, reply) => {
     const body = req.body;
     console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
-    fastify.log.info('Mensagem recebida:', body);
 
     const messages = body.entry?.[0]?.changes?.[0]?.value?.messages;
     const contact = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
@@ -29,8 +27,35 @@ export default async function webhookRoutes(fastify, opts) {
     const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
-      const msgBody = messages[0].text?.body || '';
-      console.log(`🧾 Mensagem recebida de ${from}:`, msgBody);
+      const msg = messages[0];
+      let msgBody = '';
+      let msgType = msg.type;
+
+      switch (msgType) {
+        case 'text':
+          msgBody = msg.text?.body || '';
+          break;
+        case 'image':
+          msgBody = '[imagem recebida]';
+          break;
+        case 'video':
+          msgBody = '[vídeo recebido]';
+          break;
+        case 'audio':
+          msgBody = '[áudio recebido]';
+          break;
+        case 'document':
+          msgBody = '[documento recebido]';
+          break;
+        case 'location':
+          const { latitude, longitude } = msg.location || {};
+          msgBody = `📍 Localização recebida: ${latitude}, ${longitude}`;
+          break;
+        default:
+          msgBody = `[tipo de mensagem não tratado: ${msgType}]`;
+      }
+
+      console.log(`🧾 Mensagem recebida de ${from} (${msgType}):`, msgBody);
 
       // Carrega o último fluxo publicado
       const { data: latestFlow } = await supabase
@@ -47,19 +72,14 @@ export default async function webhookRoutes(fastify, opts) {
         now: new Date().toISOString(),
       };
 
-      // Processa a mensagem no motor
-      const botResponse = await processMessage(
-        msgBody.toLowerCase(),
-        latestFlow?.data,
-        vars,
-        from
-      );
+      const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars, from);
       console.log(`🤖 Resposta do bot:`, botResponse);
 
-      // Salva no histórico (mesmo que processMessage envie as mensagens)
+      // Salva a mensagem no histórico
       await supabase.from('messages').insert([
         {
           user_id: from,
+          type: msgType,
           message: msgBody,
           response: botResponse,
           created_at: new Date().toISOString(),
