@@ -1,4 +1,4 @@
-import { supabase } from '../services/db.js';
+import { supabase } from '../../services/db.js';
 export async function getSession(userId, flow, vars) {
   const { data: session } = await supabase.from('sessions').select('*').eq('user_id', userId).single();
   if (session) return { current_block: session.current_block, vars: {...vars, ...session.vars} };
