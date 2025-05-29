@@ -184,8 +184,10 @@ export async function processMessage(message, flow, vars, rawUserId) {
       updated_at: new Date().toISOString()
     }]);
 
-    // 9) Se bloco aguarda input, sai; senão continua
-    if (block.awaitResponse) break;
+        // 9) Se bloco aguarda input, retorna a última resposta para pausar o loop
+    if (block.awaitResponse) {
+      return lastResponse;
+    }
     currentBlockId = nextBlock;
   }
 
