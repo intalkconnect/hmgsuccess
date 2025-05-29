@@ -6,37 +6,35 @@ import axios from 'axios';
 import vm from 'vm';
 
 /**
- * Avalia um array de condições contra as variáveis de sessão.
+ * Avalia condições de ação
  */
 function evaluateConditions(conditions = [], sessionVars = {}) {
-  for (const condition of conditions) {
-    const { type, variable, value } = condition;
-    const actualValue = sessionVars[variable];
-
+  for (const { type, variable, value } of conditions) {
+    const actual = sessionVars[variable];
     switch (type) {
       case 'exists':
-        if (actualValue == null) return false;
+        if (actual == null) return false;
         break;
       case 'not_exists':
-        if (actualValue != null) return false;
+        if (actual != null) return false;
         break;
       case 'equals':
-        if (actualValue != value) return false;
+        if (actual != value) return false;
         break;
       case 'not_equals':
-        if (actualValue == value) return false;
+        if (actual == value) return false;
         break;
       case 'contains':
-        if (!String(actualValue).includes(value)) return false;
+        if (!String(actual).includes(value)) return false;
         break;
       case 'regex':
-        if (!new RegExp(value).test(actualValue)) return false;
+        if (!new RegExp(value).test(actual)) return false;
         break;
       case 'greater_than':
-        if (!(parseFloat(actualValue) > parseFloat(value))) return false;
+        if (!(parseFloat(actual) > parseFloat(value))) return false;
         break;
       case 'less_than':
-        if (!(parseFloat(actualValue) < parseFloat(value))) return false;
+        if (!(parseFloat(actual) < parseFloat(value))) return false;
         break;
       default:
         return false;
@@ -46,34 +44,31 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 /**
- * Envia a mensagem no canal correto.
+ * Dispara a API certa dependendo do canal
  */
 async function sendMessageByChannel(channel, to, type, content) {
-  switch (channel) {
-    case 'webchat':
-      return sendWebchatMessage({ to, content });
-    case 'whatsapp':
-    default:
-      if (type === 'text' && typeof content === 'string') {
-        return sendWhatsappMessage({ to, type, content: { body: content } });
-      }
-      return sendWhatsappMessage({ to, type, content });
+  if (channel === 'webchat') {
+    return sendWebchatMessage({ to, content });
   }
+  // whatsapp
+  if (type === 'text' && typeof content === 'string') {
+    return sendWhatsappMessage({ to, type, content: { body: content } });
+  }
+  return sendWhatsappMessage({ to, type, content });
 }
 
 /**
- * Processa cada mensagem do usuário, navegando pelo flow
- * e executando actions sempre que houver awaitResponse ou saídas.
+ * Processa mensagem do usuário, navega pelo flow e nunca deixa next undefined.
  */
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
 
-  // Validação básica do flow
+  // validação inicial
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
-  // Carrega sessão existente
+  // busca sessão existente
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
@@ -83,31 +78,29 @@ export async function processMessage(message, flow, vars, rawUserId) {
   let currentBlockId = flow.start;
   let sessionVars = { ...vars };
 
-  // Se já existia sessão e bloco corrente
+  // se já tinha sessão e bloco configurado...
   if (session?.current_block && flow.blocks[session.current_block]) {
-    const awaitingBlock = flow.blocks[session.current_block];
+    const awaiting = flow.blocks[session.current_block];
     sessionVars = { ...sessionVars, ...session.vars };
 
-    // Se estamos aguardando resposta desse bloco
-    if (awaitingBlock.awaitResponse) {
-      // sem mensagem, paramos aqui para esperar
-      if (!message) {
-        return null;
-      }
-      // grava resposta e decide próximo bloco via actions
+    if (awaiting.awaitResponse) {
+      // aguardando resposta: sem mensagem, volta null
+      if (!message) return null;
+      // grava a resposta do usuário
       sessionVars.lastUserMessage = message;
-      for (const action of awaitingBlock.actions || []) {
+      // escolhe próximo pelas actions
+      for (const action of awaiting.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
           break;
         }
       }
     } else {
-      // não aguardava resposta: retomamos do próprio bloco
+      // não aguardava: continua deste bloco
       currentBlockId = session.current_block;
     }
   } else {
-    // primeira vez: grava sessão inicial
+    // primeira vez: grava sessão
     await supabase.from('sessions').upsert([{
       user_id: userId,
       current_block: currentBlockId,
@@ -119,132 +112,117 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
   let lastResponse = null;
 
-  // Loop principal pelos blocos
+  // loop principal
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    let responseContent = '';
+    let content = '';
 
     try {
-      // Substitui variáveis no conteúdo
+      // prepara conteúdo (string ou objeto)
       if (block.content != null) {
         if (typeof block.content === 'string') {
-          responseContent = substituteVariables(block.content, sessionVars);
+          content = substituteVariables(block.content, sessionVars);
         } else {
-          responseContent = JSON.parse(
+          content = JSON.parse(
             substituteVariables(JSON.stringify(block.content), sessionVars)
           );
         }
       }
 
-      // Executa cada tipo de bloco
+      // executa tipos especiais
       switch (block.type) {
-        case 'text':
-        case 'image':
-        case 'audio':
-        case 'video':
-        case 'file':
-        case 'document':
-        case 'location':
-          // já temos responseContent pronto
-          break;
-
-        case 'api_call':
-          // montagem de URL e payload
-          {
-            const url = substituteVariables(block.url, sessionVars);
-            const payload = JSON.parse(
-              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-            );
-            const apiRes = await axios({
-              method: block.method || 'GET',
-              url,
-              data: payload,
-            });
-            sessionVars.responseStatus = apiRes.status;
-            sessionVars.responseData = apiRes.data;
-
-            if (block.script) {
-              const sandbox = { response: apiRes.data, vars: sessionVars, output: '' };
-              vm.createContext(sandbox);
-              vm.runInContext(block.script, sandbox);
-              responseContent = sandbox.output;
-            } else {
-              responseContent = JSON.stringify(apiRes.data);
-            }
-
-            if (block.outputVar) {
-              sessionVars[block.outputVar] = responseContent;
-            }
-            if (block.statusVar) {
-              sessionVars[block.statusVar] = apiRes.status;
-            }
-          }
-          break;
-
-        case 'script':
-          {
-            const sandbox = { vars: sessionVars, output: '' };
-            const fullScript = `
-              ${block.code}
-              output = ${block.function};
-            `;
+        case 'api_call': {
+          const url = substituteVariables(block.url, sessionVars);
+          const payload = JSON.parse(
+            substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+          );
+          const res = await axios({ method: block.method || 'GET', url, data: payload });
+          sessionVars.responseStatus = res.status;
+          sessionVars.responseData = res.data;
+          if (block.script) {
+            const sandbox = { response: res.data, vars: sessionVars, output: '' };
             vm.createContext(sandbox);
-            vm.runInContext(fullScript, sandbox);
-            responseContent = sandbox.output?.toString() || '';
-            if (block.outputVar) {
-              sessionVars[block.outputVar] = sandbox.output;
-            }
+            vm.runInContext(block.script, sandbox);
+            content = sandbox.output;
+          } else {
+            content = JSON.stringify(res.data);
           }
+          if (block.outputVar) sessionVars[block.outputVar] = content;
+          if (block.statusVar) sessionVars[block.statusVar] = res.status;
           break;
-
+        }
+        case 'script': {
+          const sandbox = { vars: sessionVars, output: '' };
+          const code = `${block.code}\noutput = ${block.function};`;
+          vm.createContext(sandbox);
+          vm.runInContext(code, sandbox);
+          content = sandbox.output?.toString() || '';
+          if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
+          break;
+        }
         default:
-          responseContent = '[Bloco não reconhecido]';
+          // text, image, audio, document, location: content já está pronto
+          break;
       }
 
-      // Envia a resposta, se for um tipo suportado
-      if (responseContent && ['text','image','audio','video','file','document','location'].includes(block.type)) {
-        await sendMessageByChannel(
-          sessionVars.channel || 'whatsapp',
-          userId,
-          block.type,
-          responseContent
-        );
-        lastResponse = responseContent;
+      // envia mensagem (com catch específico para mídias)
+      if (content && ['text','image','audio','video','file','document','location'].includes(block.type)) {
+        try {
+          await sendMessageByChannel(
+            sessionVars.channel || 'whatsapp',
+            userId,
+            block.type,
+            content
+          );
+        } catch (mediaErr) {
+          console.error('❌ Falha ao enviar mídia:', mediaErr);
+          // fallback: envia URL ou texto simples
+          const fallback = typeof content === 'object' && content.url
+            ? `Aqui está seu conteúdo: ${content.url}`
+            : `Aqui está sua mensagem: ${content}`;
+          await sendMessageByChannel(
+            sessionVars.channel || 'whatsapp',
+            userId,
+            'text',
+            fallback
+          );
+        }
+        lastResponse = content;
       }
 
-      // Decide próximo bloco via actions (sempre)
-      let nextBlockId = null;
+      // determina próximo bloco via actions (sempre)
+      let nextBlock = null;
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
-          nextBlockId = action.next;
+          nextBlock = action.next;
           break;
         }
       }
+      // nunca deixe undefined: se não houver action, cai no onError
+      if (!nextBlock && block.awaitResponse === false) {
+        console.warn(`⚠️ Sem ação de saída para bloco ${currentBlockId}`);
+      }
 
-      // Atualiza sessão antes de prosseguir
+      // atualiza sessão
       await supabase.from('sessions').upsert([{
         user_id: userId,
-        current_block: block.awaitResponse ? currentBlockId : nextBlockId,
+        current_block: block.awaitResponse ? currentBlockId : nextBlock,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString(),
       }]);
 
-      // Se precisa esperar resposta, interrompe aqui
-      if (block.awaitResponse) {
-        break;
-      }
+      // se aguarda resposta, interrompe aqui
+      if (block.awaitResponse) break;
 
-      // Se tem timeout configurado, aplica delay
-      const timeoutSec = parseInt(block.awaitTimeInSeconds || '0', 10);
-      if (timeoutSec > 0) {
-        await new Promise(r => setTimeout(r, timeoutSec * 1000));
-      }
+      // respeita timeout de saída
+      const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
+      if (delay > 0) await new Promise(r => setTimeout(r, delay*1000));
 
-      // Avança para o próximo bloco
-      currentBlockId = nextBlockId;
+      currentBlockId = nextBlock;
+
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
