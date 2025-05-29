@@ -129,7 +129,7 @@ export default async function webhookRoutes(fastify, opts) {
       // Marca a mensagem como lida no WhatsApp (fire-and-forget)
       markAsRead(
         process.env.PHONE_NUMBER_ID,
-        process.env.ACCESS_TOKEN,
+        process.env.WHATSAPP_TOKEN,
         msgId
       ).catch(err => console.error('❌ markAsRead erro:', err));
     } else {
