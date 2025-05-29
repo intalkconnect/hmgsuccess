@@ -45,9 +45,10 @@ export async function processMessage(message, flow, vars, userId) {
             data: payload
           });
           if (block.script) {
-            const sandbox = { response: apiRes.data, vars };
+            const sandbox = { response: apiRes.data, vars, output: '' };
             vm.createContext(sandbox);
-            response = vm.runInContext(block.script, sandbox);
+            vm.runInContext(block.script, sandbox);
+            response = sandbox.output;
           } else {
             response = JSON.stringify(apiRes.data);
           }
