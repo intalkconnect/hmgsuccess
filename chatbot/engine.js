@@ -48,12 +48,7 @@ async function sendMessageByChannel(channel, to, type, content) {
       return sendWebchatMessage({ to, content });
     case 'whatsapp':
     default:
-      if ((type === 'image' || type === 'audio' || type === 'video' || type === 'document') && content.url) {
-        const mediaId = await sendWhatsappMessage.uploadMediaToWhatsapp(content.url, type);
-        if (!mediaId) throw new Error('Erro ao fazer upload da mídia');
-        return sendWhatsappMessage({ to, type, content: { id: mediaId, caption: content.caption } });
-      }
-      if (type === 'text') {
+      if (type === 'text' && typeof content === 'string') {
         return sendWhatsappMessage({ to, type, content: { body: content } });
       }
       return sendWhatsappMessage({ to, type, content });
@@ -83,21 +78,9 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
     const awaitingBlock = flow.blocks[currentBlockId];
     if (awaitingBlock.awaitResponse && message) {
-  sessionVars.lastUserMessage = message;
-
-  let nextBlock = awaitingBlock.next ?? null;
-
-  if (awaitingBlock.actions && Array.isArray(awaitingBlock.actions)) {
-    for (const action of awaitingBlock.actions) {
-      if (evaluateConditions(action.conditions, sessionVars)) {
-        nextBlock = action.next;
-        break;
-      }
-    }
-  }
-
-  currentBlockId = nextBlock;
-} else if (awaitingBlock.awaitResponse && !message) {
+      sessionVars.lastUserMessage = message;
+      currentBlockId = awaitingBlock.next;
+    } else if (awaitingBlock.awaitResponse && !message) {
       return null;
     }
   } else {
@@ -119,16 +102,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
     let response = '';
     try {
       let content = '';
-if (block.content) {
-  if (typeof block.content === 'string') {
-    content = substituteVariables(block.content, sessionVars);
-  } else if (typeof block.content === 'object') {
-    content = JSON.parse(
-      substituteVariables(JSON.stringify(block.content), sessionVars)
-    );
-  }
-}
-
+      if (block.content) {
+        if (typeof block.content === 'string') {
+          content = substituteVariables(block.content, sessionVars);
+        } else if (typeof block.content === 'object') {
+          content = JSON.parse(
+            substituteVariables(JSON.stringify(block.content), sessionVars)
+          );
+        }
+      }
 
       switch (block.type) {
         case 'text':
