@@ -1,11 +1,24 @@
 import { substituteVariables } from '../utils/vars.js';
+import { supabase } from '../services/db.js';
 import axios from 'axios';
 import vm from 'vm';
 
-export async function processMessage(message, flow, vars) {
+export async function processMessage(message, flow, vars, userId) {
   if (!flow || !flow.blocks || !flow.start) return flow?.onError?.content || 'Erro interno no bot';
 
+  // Tenta carregar sessão
   let currentBlockId = flow.start;
+  const { data: session } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  if (session?.current_block && flow.blocks[session.current_block]) {
+    currentBlockId = session.current_block;
+    vars = { ...vars, ...session.vars };
+  }
+
   let response = '';
 
   while (currentBlockId) {
@@ -28,7 +41,7 @@ export async function processMessage(message, flow, vars) {
           const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), vars));
           const apiRes = await axios({
             method: block.method || 'GET',
-            url: block.url,
+            url: substituteVariables(block.url, vars),
             data: payload
           });
           if (block.script) {
@@ -43,6 +56,15 @@ export async function processMessage(message, flow, vars) {
         default:
           response = '[Bloco não reconhecido]';
       }
+
+      // Atualiza sessão
+      await supabase.from('sessions').upsert({
+        user_id: userId,
+        current_block: block.next || null,
+        last_flow_id: flow.id || null,
+        vars,
+        updated_at: new Date().toISOString()
+      });
 
       currentBlockId = block.next || null;
     } catch (err) {
