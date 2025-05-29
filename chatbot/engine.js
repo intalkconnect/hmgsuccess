@@ -55,38 +55,49 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-          try {
-            const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
-            const apiRes = await axios({
-              method: block.method || 'GET',
-              url: substituteVariables(block.url, sessionVars),
-              data: payload
-            });
-            sessionVars.responseStatus = apiRes.status;
-            sessionVars.responseData = apiRes.data;
+  try {
+    const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
+    const apiRes = await axios({
+      method: block.method || 'GET',
+      url: substituteVariables(block.url, sessionVars),
+      data: payload
+    });
+    sessionVars.responseStatus = apiRes.status;
+    sessionVars.responseData = apiRes.data;
 
-            if (block.script) {
-              const sandbox = { response: apiRes.data, vars: sessionVars, output: '' };
-              vm.createContext(sandbox);
-              vm.runInContext(block.script, sandbox);
-              response = sandbox.output;
-            } else {
-              response = JSON.stringify(apiRes.data);
-            }
-          } catch (apiErr) {
-            sessionVars.responseStatus = apiErr?.response?.status || 500;
-            sessionVars.responseData = apiErr?.response?.data || {};
+    if (block.script) {
+      const sandbox = { response: apiRes.data, vars: sessionVars, output: '' };
+      vm.createContext(sandbox);
+      vm.runInContext(block.script, sandbox);
+      response = sandbox.output;
+    } else {
+      response = JSON.stringify(apiRes.data);
+    }
+  } catch (apiErr) {
+    console.error(`❌ Erro ao chamar API no bloco ${currentBlockId}:`, apiErr?.response?.data || apiErr.message);
+    sessionVars.responseStatus = apiErr?.response?.status || 500;
+    sessionVars.responseData = apiErr?.response?.data || {};
 
-            if (block.onErrorScript) {
-              const sandbox = { error: apiErr, vars: sessionVars, output: '' };
-              vm.createContext(sandbox);
-              vm.runInContext(block.onErrorScript, sandbox);
-              response = sandbox.output;
-            } else {
-              throw apiErr;
-            }
-          }
-          break;
+    if (block.onErrorScript) {
+      const sandbox = { error: apiErr, vars: sessionVars, output: '' };
+      vm.createContext(sandbox);
+      vm.runInContext(block.onErrorScript, sandbox);
+      response = sandbox.output;
+
+      // Continua fluxo mesmo com erro tratado
+    } else {
+      // Encerra execução e zera sessão se erro não for tratado
+      await supabase.from('sessions').upsert({
+        user_id: userId,
+        current_block: null,
+        last_flow_id: flow.id || null,
+        vars: sessionVars,
+        updated_at: new Date().toISOString()
+      });
+      return flow?.onError?.content || '⚠️ Erro inesperado ao consultar o CEP.';
+    }
+  }
+  break;
 
         default:
           response = '[Bloco não reconhecido]';
