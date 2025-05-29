@@ -215,14 +215,23 @@ export async function processMessage(message, flow, vars, rawUserId) {
           response = '[Bloco não reconhecido]';
       }
 
-      if (response) {
-        try {
-          await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, block.type || 'text', { body: response });
-          lastResponse = response;
-        } catch (err) {
-          console.error('Erro ao enviar mensagem:', err?.response?.data || err.message);
-        }
-      }
+if (
+  response &&
+  ['text', 'image', 'audio', 'video', 'file', 'document', 'location'].includes(block.type)
+) {
+  try {
+    await sendMessageByChannel(
+      sessionVars.channel || 'whatsapp',
+      userId,
+      block.type || 'text',
+      content
+    );
+    lastResponse = response;
+  } catch (err) {
+    console.error('Erro ao enviar mensagem:', err?.response?.data || err.message);
+  }
+}
+
 
       let nextBlock = block.next ?? null;
       if (block.actions && Array.isArray(block.actions)) {
