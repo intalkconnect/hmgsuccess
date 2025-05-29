@@ -1,6 +1,6 @@
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
-import { sendWhatsappMessage, uploadMediaToWhatsapp } from '../services/sendWhatsappMessage.js';
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
@@ -48,12 +48,6 @@ async function sendMessageByChannel(channel, to, type, content) {
       return sendWebchatMessage({ to, content });
     case 'whatsapp':
     default:
-      // Verifica se é mídia e precisa de upload
-      if ((type === 'image' || type === 'audio' || type === 'video' || type === 'document') && content.link) {
-        const mediaId = await uploadMediaToWhatsapp(content.link, type);
-        if (!mediaId) throw new Error('Erro ao fazer upload da mídia');
-        return sendWhatsappMessage({ to, type, content: { id: mediaId, caption: content.caption } });
-      }
       return sendWhatsappMessage({ to, type, content });
   }
 }
