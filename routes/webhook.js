@@ -5,6 +5,7 @@ import { substituteVariables } from '../utils/vars.js';
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
+  // Verificação do Webhook (GET)
   fastify.get('/', async (req, reply) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -16,6 +17,7 @@ export default async function webhookRoutes(fastify, opts) {
     return reply.code(403).send('Forbidden');
   });
 
+  // Recebimento de mensagens (POST)
   fastify.post('/', async (req, reply) => {
     const body = req.body;
     console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
@@ -30,7 +32,7 @@ export default async function webhookRoutes(fastify, opts) {
       const msgBody = messages[0].text?.body || '';
       console.log(`🧾 Mensagem recebida de ${from}:`, msgBody);
 
-      // Buscar o último fluxo publicado
+      // Carrega o último fluxo publicado
       const { data: latestFlow } = await supabase
         .from('flows')
         .select('*')
@@ -45,31 +47,24 @@ export default async function webhookRoutes(fastify, opts) {
         now: new Date().toISOString(),
       };
 
-      const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars, from);
+      // Processa a mensagem no motor
+      const botResponse = await processMessage(
+        msgBody.toLowerCase(),
+        latestFlow?.data,
+        vars,
+        from
+      );
       console.log(`🤖 Resposta do bot:`, botResponse);
 
+      // Salva no histórico (mesmo que processMessage envie as mensagens)
       await supabase.from('messages').insert([
         {
           user_id: from,
           message: msgBody,
           response: botResponse,
-          created_at: new Date().toISOString()
-        }
+          created_at: new Date().toISOString(),
+        },
       ]);
-
-      try {
-        await fastify.inject({
-          method: 'POST',
-          url: `/messages/send`,
-          payload: {
-            to: from,
-            type: 'text',
-            content: { body: botResponse },
-          },
-        });
-      } catch (err) {
-        fastify.log.error('Erro ao enviar resposta do bot:', err);
-      }
     } else {
       console.log('⚠️ Nenhuma mensagem ou remetente identificado no payload.');
     }
