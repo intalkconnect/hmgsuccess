@@ -52,7 +52,9 @@ async function sendMessageByChannel(channel, to, content) {
   }
 }
 
-export async function processMessage(message, flow, vars, userId) {
+export async function processMessage(message, flow, vars, rawUserId) {
+  const userId = `${rawUserId}@c.wa.msginb.net`;
+
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
