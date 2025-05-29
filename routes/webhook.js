@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
 import { processMessage } from '../chatbot/engine.js';
 import axios from 'axios';
+
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
@@ -31,42 +32,52 @@ export default async function webhookRoutes(fastify, opts) {
 
     console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
 
-    const messages = body.entry?.[0]?.changes?.[0]?.value?.messages;
-    const contact  = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
+    const entry    = body.entry[0].changes[0].value;
+    const messages = entry.messages;
+    const contact  = entry.contacts?.[0];
     const from     = contact?.wa_id;
     const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
-      const msg      = messages[0];
-      const msgId    = msg.id;                    // <-- extraímos o message_id
-      let msgBody    = '';
-      let msgType    = msg.type;
+      const msg   = messages[0];
+      const msgId = msg.id;
+      const msgType = msg.type;
 
+      // Normaliza payload do usuário para texto simples ou ID de interactive
+      let userMessage = '';
       switch (msgType) {
         case 'text':
-          msgBody = msg.text?.body || '';
+          userMessage = msg.text?.body || '';
+          break;
+        case 'interactive':
+          if (msg.interactive.type === 'button_reply') {
+            userMessage = msg.interactive.button_reply.id;
+          } else if (msg.interactive.type === 'list_reply') {
+            userMessage = msg.interactive.list_reply.id;
+          }
           break;
         case 'image':
-          msgBody = '[imagem recebida]';
+          userMessage = '[imagem recebida]';
           break;
         case 'video':
-          msgBody = '[vídeo recebido]';
+          userMessage = '[vídeo recebido]';
           break;
         case 'audio':
-          msgBody = '[áudio recebido]';
+          userMessage = '[áudio recebido]';
           break;
         case 'document':
-          msgBody = '[documento recebido]';
+          userMessage = '[documento recebido]';
           break;
-        case 'location':
+        case 'location': {
           const { latitude, longitude } = msg.location || {};
-          msgBody = `📍 Localização recebida: ${latitude}, ${longitude}`;
+          userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`;
           break;
+        }
         default:
-          msgBody = `[tipo de mensagem não tratado: ${msgType}]`;
+          userMessage = `[tipo não tratado: ${msgType}]`;
       }
 
-      console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, msgBody);
+      console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage);
 
       // Carrega o último fluxo publicado
       const { data: latestFlow } = await supabase
@@ -76,39 +87,36 @@ export default async function webhookRoutes(fastify, opts) {
         .limit(1)
         .single();
 
+      // Prepara variáveis de sessão
       const vars = {
-        userPhone:       from,
-        userName:        profileName,
-        userMessage:     msgBody,
-        channel:         'whatsapp',
-        now:             new Date().toISOString(),
-        lastMessageId:   msgId,      // se quiser passar também para a engine
+        userPhone:     from,
+        userName:      profileName,
+        lastUserMessage: userMessage,
+        channel:       'whatsapp',
+        now:           new Date().toISOString(),
+        lastMessageId: msgId
       };
 
       // Processa a mensagem no engine
       const botResponse = await processMessage(
-        msgBody.toLowerCase(),
+        userMessage.toLowerCase(),
         latestFlow?.data,
         vars,
         from
       );
-      console.log(`🤖 Resposta do bot:`, botResponse);
+      console.log('🤖 Resposta do bot:', botResponse);
 
-      // Salva a mensagem no histórico, agora incluindo whatsapp_message_id
-      await supabase
-        .from('messages')
-        .insert([
-          {
-            user_id:             from,
-            whatsapp_message_id: msgId,
-            type:                msgType,
-            message:             msgBody,
-            response:            botResponse,
-            created_at:          new Date().toISOString(),
-          },
-        ]);
-}
+      // Salva no histórico
+      await supabase.from('messages').insert([{
+        user_id:             from,
+        whatsapp_message_id: msgId,
+        type:                msgType,
+        message:             userMessage,
+        response:            botResponse,
+        created_at:          new Date().toISOString()
+      }]);
+    }
+
     reply.code(200).send('EVENT_RECEIVED');
-  }); // <- fecha fastify.post
-
+  });
 }
