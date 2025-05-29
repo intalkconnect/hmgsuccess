@@ -13,7 +13,7 @@ const {
  * Chama Graph API para marcar como lida + typing indicator,
  * usando diretamente o messageId fornecido.
  */
-async function markAsReadAndTyping(messageId) {
+export async function markAsReadAndTyping(messageId) {
   if (!messageId) return;
 
   const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
@@ -37,14 +37,6 @@ async function markAsReadAndTyping(messageId) {
  * Agora aceita opcionalmente `messageId` para fechar o typing.
  */
 export async function sendWhatsappMessage({ to, type, content, messageId }) {
-  // 🚨 antes de montar o payload, dispara read+typing para esta messageId
-  try {
-    await markAsReadAndTyping(messageId);
-    console.log(`✓ read+typing enviado para messageId=${messageId}`);
-  } catch (err) {
-    console.error('❌ erro no read+typing:', err.response?.data || err.message);
-  }
-
   // Monta o payload normal
   const payload = {
     messaging_product: 'whatsapp',
