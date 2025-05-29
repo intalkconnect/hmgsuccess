@@ -44,17 +44,18 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 /**
- * Dispara a API certa dependendo do canal
+ * Dispara a API certa dependendo do canal,
+ * passando messageId para fechar o typing corretamente.
  */
-async function sendMessageByChannel(channel, to, type, content) {
+async function sendMessageByChannel(channel, to, type, content, messageId) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
   // whatsapp
   if (type === 'text' && typeof content === 'string') {
-    return sendWhatsappMessage({ to, type, content: { body: content } });
+    return sendWhatsappMessage({ to, type, content: { body: content }, messageId });
   }
-  return sendWhatsappMessage({ to, type, content });
+  return sendWhatsappMessage({ to, type, content, messageId });
 }
 
 /**
@@ -84,11 +85,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
     sessionVars = { ...sessionVars, ...session.vars };
 
     if (awaiting.awaitResponse) {
-      // aguardando resposta: sem mensagem, volta null
       if (!message) return null;
-      // grava a resposta do usuário
       sessionVars.lastUserMessage = message;
-      // escolhe próximo pelas actions
       for (const action of awaiting.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
@@ -96,21 +94,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
     } else {
-      // não aguardava: continua deste bloco
       currentBlockId = session.current_block;
     }
   } else {
-    // primeira vez: grava sessão
-    await supabase.from('sessions').upsert([{
-      user_id: userId,
-      current_block: currentBlockId,
-      last_flow_id: flow.id || null,
-      vars: sessionVars,
-      updated_at: new Date().toISOString(),
-    }]);
+    await supabase.from('sessions').upsert([{ user_id: userId, current_block: currentBlockId, last_flow_id: flow.id || null, vars: sessionVars, updated_at: new Date().toISOString() }]);
   }
 
   let lastResponse = null;
+  const validTypes = ['text', 'image', 'audio', 'video', 'file', 'document', 'location'];
 
   // loop principal
   while (currentBlockId) {
@@ -120,14 +111,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
     let content = '';
 
     try {
-      // prepara conteúdo (string ou objeto)
+      // prepara conteúdo
       if (block.content != null) {
         if (typeof block.content === 'string') {
           content = substituteVariables(block.content, sessionVars);
         } else {
-          content = JSON.parse(
-            substituteVariables(JSON.stringify(block.content), sessionVars)
-          );
+          content = JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
         }
       }
 
@@ -135,9 +124,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
       switch (block.type) {
         case 'api_call': {
           const url = substituteVariables(block.url, sessionVars);
-          const payload = JSON.parse(
-            substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-          );
+          const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
           const res = await axios({ method: block.method || 'GET', url, data: payload });
           sessionVars.responseStatus = res.status;
           sessionVars.responseData = res.data;
@@ -163,36 +150,26 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
         }
         default:
-          // text, image, audio, document, location: content já está pronto
           break;
       }
 
-      // envia mensagem (com catch específico para mídias)
-      if (content && ['text','image','audio','video','file','document','location'].includes(block.type)) {
+      // respeita timeout antes de envio
+      const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
+      if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
+
+      // envia mensagem
+      if (content && validTypes.includes(block.type)) {
         try {
-          await sendMessageByChannel(
-            sessionVars.channel || 'whatsapp',
-            userId,
-            block.type,
-            content
-          );
+          await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, block.type, content, sessionVars.lastMessageId);
+          lastResponse = content;
         } catch (mediaErr) {
           console.error('❌ Falha ao enviar mídia:', mediaErr);
-          // fallback: envia URL ou texto simples
-          const fallback = typeof content === 'object' && content.url
-            ? `Aqui está seu conteúdo: ${content.url}`
-            : `Aqui está sua mensagem: ${content}`;
-          await sendMessageByChannel(
-            sessionVars.channel || 'whatsapp',
-            userId,
-            'text',
-            fallback
-          );
+          const fallback = typeof content === 'object' && content.url ? `Aqui está seu conteúdo: ${content.url}` : `Aqui está sua mensagem: ${content}`;
+          await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, 'text', fallback, sessionVars.lastMessageId);
         }
-        lastResponse = content;
       }
 
-      // determina próximo bloco via actions (sempre)
+      // determina próximo bloco
       let nextBlock = null;
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
@@ -200,29 +177,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
         }
       }
-      // nunca deixe undefined: se não houver action, cai no onError
-      if (!nextBlock && block.awaitResponse === false) {
-        console.warn(`⚠️ Sem ação de saída para bloco ${currentBlockId}`);
-      }
+      if (!nextBlock && block.awaitResponse === false) console.warn(`⚠️ Sem ação de saída para bloco ${currentBlockId}`);
 
       // atualiza sessão
-      await supabase.from('sessions').upsert([{
-        user_id: userId,
-        current_block: block.awaitResponse ? currentBlockId : nextBlock,
-        last_flow_id: flow.id || null,
-        vars: sessionVars,
-        updated_at: new Date().toISOString(),
-      }]);
+      await supabase.from('sessions').upsert([{ user_id: userId, current_block: block.awaitResponse ? currentBlockId : nextBlock, last_flow_id: flow.id || null, vars: sessionVars, updated_at: new Date().toISOString() }]);
 
-      // se aguarda resposta, interrompe aqui
       if (block.awaitResponse) break;
-
-      // respeita timeout de saída
-      const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
-      if (delay > 0) await new Promise(r => setTimeout(r, delay*1000));
-
       currentBlockId = nextBlock;
-
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
       return flow.onError?.content || 'Erro no fluxo do bot.';
