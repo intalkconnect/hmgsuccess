@@ -75,13 +75,15 @@ export async function processMessage(message, flow, vars, userId) {
   }
 
   // Se terminou o fluxo, reseta a sessão para começar do início na próxima mensagem
-  await supabase.from('sessions').upsert({
-    user_id: userId,
-    current_block: flow.start,
-    last_flow_id: flow.id || null,
-    vars,
-    updated_at: new Date().toISOString()
-  });
+  if (!currentBlockId) {
+    await supabase.from('sessions').upsert({
+      user_id: userId,
+      current_block: flow.start,
+      last_flow_id: flow.id || null,
+      vars,
+      updated_at: new Date().toISOString()
+    });
+  }
 
   return response;
 }
