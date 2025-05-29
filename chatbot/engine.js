@@ -27,14 +27,13 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 /**
- * Envia mensagem pelo canal apropriado
+ * Envia mensagem pelo canal apropriado, marcando read+typing no WhatsApp
  */
 async function sendMessageByChannel(channel, to, type, content, messageId) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
-  // WhatsApp Cloud API
-  // exibe read+typing antes de enviar
+  // WhatsApp: dispara read+typing antes de enviar
   if (messageId) {
     try {
       await markAsReadAndTyping(messageId);
@@ -54,49 +53,49 @@ async function sendMessageByChannel(channel, to, type, content, messageId) {
  */
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
-
-  // Validação do flow
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
-  // Carrega sessão ou inicializa
+  // Carrega ou inicia sessão
   const { data: session } = await supabase
     .from('sessions')
     .select('*')
     .eq('user_id', userId)
     .single();
-
   let currentBlockId = session?.current_block || flow.start;
   let sessionVars = session?.vars ? { ...vars, ...session.vars } : { ...vars };
   let lastResponse = null;
   const validTypes = ['text','image','audio','video','file','document','location','interactive'];
 
-  // Loop pelos blocos
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // 1) Se aguardando resposta, processa e avança imediatamente
-    if (block.awaitResponse && message != null && session?.current_block === currentBlockId) {
+        // 1) Se aguardando resposta, processa input do usuário e avança
+    if (block.awaitResponse && message != null) {
       sessionVars.lastUserMessage = message;
+      // escolhe próxima ação com base nas condições
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
           break;
         }
       }
+      // grava nova posição na sessão
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: currentBlockId,
-        last_flow_id: flow.id || null,
         vars: sessionVars,
+        last_flow_id: flow.id || null,
         updated_at: new Date().toISOString()
       }]);
+      // continua o loop para processar imediatamente o novo bloco
       continue;
     }
+    }
 
-    // 2) Prepara conteúdo do bloco
+    // 2) Prepara conteúdo
     let content = '';
     if (block.content != null) {
       content = typeof block.content === 'string'
@@ -104,11 +103,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
         : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
     }
 
-    // 3) Executa blocos especiais (api_call / script)
+    // 3) Executa api_call ou script
     if (block.type === 'api_call') {
       const url = substituteVariables(block.url, sessionVars);
-      const payload = JSON.parse(substituteVariables(JSON.stringify(block.body||{}), sessionVars));
-      const res = await axios({ method: block.method||'GET', url, data: payload });
+      const bodyPayload = JSON.parse(substituteVariables(JSON.stringify(block.body||{}), sessionVars));
+      const res = await axios({ method: block.method||'GET', url, data: bodyPayload });
       sessionVars.responseStatus = res.status;
       sessionVars.responseData = res.data;
       if (block.script) {
@@ -130,15 +129,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
     }
 
-    // 4) Atraso antes de envio: sendDelayInSeconds
+    // 4) Atraso antes de enviar mensagem (sendDelayInSeconds)
     const sendDelay = parseInt(block.sendDelayInSeconds||'0',10);
-    if (sendDelay > 0) await new Promise(r => setTimeout(r, sendDelay * 1000));
+    if (sendDelay > 0) await new Promise(r => setTimeout(r, sendDelay*1000));
 
-    // 5) Envia a mensagem pelo canal
+    // 5) Envia mensagem (text, media, location, interactive)
     if (content && validTypes.includes(block.type)) {
       try {
         await sendMessageByChannel(
-          sessionVars.channel || 'whatsapp',
+          sessionVars.channel||'whatsapp',
           userId,
           block.type,
           content,
@@ -147,23 +146,25 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       } catch (err) {
         console.error('Erro no envio:', err);
-        const fb = typeof content==='object' && content.url ? `Conteúdo: ${content.url}` : content;
+        const fallback = typeof content==='object' && content.url
+          ? `Conteúdo: ${content.url}`
+          : `${content}`;
         await sendMessageByChannel(
-          sessionVars.channel || 'whatsapp',
+          sessionVars.channel||'whatsapp',
           userId,
           'text',
-          fb,
+          fallback,
           sessionVars.lastMessageId
         );
-        lastResponse = fb;
+        lastResponse = fallback;
       }
     }
 
-    // 6) Atraso após envio e antes de avançar: awaitTimeInSeconds
+    // 6) Atraso após envio e antes de continuar (awaitTimeInSeconds)
     const contDelay = parseInt(block.awaitTimeInSeconds||'0',10);
-    if (!block.awaitResponse && contDelay > 0) await new Promise(r => setTimeout(r, contDelay * 1000));
+    if (!block.awaitResponse && contDelay > 0) await new Promise(r => setTimeout(r, contDelay*1000));
 
-    // 7) Determina próximo bloco por ações ou default
+    // 7) Próximo bloco por ação ou default
     let nextBlock = null;
     for (const action of block.actions || []) {
       if (evaluateConditions(action.conditions, sessionVars)) {
@@ -179,12 +180,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
     await supabase.from('sessions').upsert([{
       user_id: userId,
       current_block: block.awaitResponse ? currentBlockId : nextBlock,
-      last_flow_id: flow.id || null,
+      last_flow_id: flow.id||null,
       vars: sessionVars,
       updated_at: new Date().toISOString()
     }]);
 
-    // 9) Se bloco aguarda input, sai; senão avança
+    // 9) Se bloco aguarda input, sai; senão continua
     if (block.awaitResponse) break;
     currentBlockId = nextBlock;
   }
