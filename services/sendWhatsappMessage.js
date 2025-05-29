@@ -1,6 +1,5 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { supabase } from '../services/db.js';
 import { uploadMediaToWhatsapp } from './wa/uploadMediaToWhatsapp.js';
 dotenv.config();
 
@@ -11,24 +10,17 @@ const {
 } = process.env;
 
 /**
- * 1) Busca na sessão o último message_id recebido para este usuário
- * 2) Chama Graph API para marcar como lida + typing indicator
+ * Chama Graph API para marcar como lida + typing indicator,
+ * usando diretamente o messageId fornecido.
  */
-async function markAsReadAndTyping(to) {
-  const { data: session } = await supabase
-    .from('sessions')
-    .select('last_whatsapp_message_id')
-    .eq('user_id', `${to}@c.wa.msginb.net`)
-    .single();
-
-  const lastId = session?.last_whatsapp_message_id;
-  if (!lastId) return;
+async function markAsReadAndTyping(messageId) {
+  if (!messageId) return;
 
   const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
   const payload = {
     messaging_product: 'whatsapp',
     status: 'read',
-    message_id: lastId,
+    message_id: messageId,
     typing_indicator: { type: 'text' }
   };
 
@@ -40,11 +32,15 @@ async function markAsReadAndTyping(to) {
   });
 }
 
-export async function sendWhatsappMessage({ to, type, content }) {
-  // 🚨 Antes de montar o payload, dispara read+typing
+/**
+ * Envia mensagem via WhatsApp Cloud API.
+ * Agora aceita opcionalmente `messageId` para fechar o typing.
+ */
+export async function sendWhatsappMessage({ to, type, content, messageId }) {
+  // 🚨 antes de montar o payload, dispara read+typing para esta messageId
   try {
-    await markAsReadAndTyping(to);
-    console.log(`✓ markAsReadAndTyping enviado para ${to}`);
+    await markAsReadAndTyping(messageId);
+    console.log(`✓ read+typing enviado para messageId=${messageId}`);
   } catch (err) {
     console.error('❌ erro no read+typing:', err.response?.data || err.message);
   }
