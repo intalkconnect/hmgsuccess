@@ -64,49 +64,60 @@ export async function processMessage(message, flow, vars, userId) {
           break;
 
         case 'api_call':
-          try {
-            const payload = JSON.parse(
-              substituteVariables(JSON.stringify(block.body || {}), sessionVars)
-            );
-            const apiRes = await axios({
-              method: block.method || 'GET',
-              url: substituteVariables(block.url, sessionVars),
-              data: payload,
-            });
+  try {
+    const payload = JSON.parse(
+      substituteVariables(JSON.stringify(block.body || {}), sessionVars)
+    );
+    const url = substituteVariables(block.url, sessionVars);
 
-            sessionVars.responseStatus = apiRes.status;
-            sessionVars.responseData = apiRes.data;
+    console.log(`🌐 Chamando API: ${url}`);
+    console.log(`📦 Payload:`, payload);
 
-            if (block.script) {
-              const sandbox = {
-                response: apiRes.data,
-                vars: sessionVars,
-                output: '',
-              };
-              vm.createContext(sandbox);
-              vm.runInContext(block.script, sandbox);
-              response = sandbox.output;
-            } else {
-              response = JSON.stringify(apiRes.data);
-            }
-          } catch (apiErr) {
-            sessionVars.responseStatus = apiErr?.response?.status || 500;
-            sessionVars.responseData = apiErr?.response?.data || {};
+    const apiRes = await axios({
+      method: block.method || 'GET',
+      url,
+      data: payload,
+    });
 
-            if (block.onErrorScript) {
-              const sandbox = {
-                error: apiErr,
-                vars: sessionVars,
-                output: '',
-              };
-              vm.createContext(sandbox);
-              vm.runInContext(block.onErrorScript, sandbox);
-              response = sandbox.output;
-            } else {
-              throw apiErr;
-            }
-          }
-          break;
+    console.log('✅ Resposta da API:', apiRes.data);
+
+    sessionVars.responseStatus = apiRes.status;
+    sessionVars.responseData = apiRes.data;
+
+    if (block.script) {
+      const sandbox = {
+        response: apiRes.data,
+        vars: sessionVars,
+        output: '',
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(block.script, sandbox);
+      response = sandbox.output;
+    } else {
+      response = JSON.stringify(apiRes.data);
+    }
+  } catch (apiErr) {
+    console.error('❌ Erro na API:', apiErr?.response?.data || apiErr.message);
+    console.error('🔁 URL usada:', block.url);
+
+    sessionVars.responseStatus = apiErr?.response?.status || 500;
+    sessionVars.responseData = apiErr?.response?.data || {};
+
+    if (block.onErrorScript) {
+      const sandbox = {
+        error: apiErr,
+        vars: sessionVars,
+        output: '',
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(block.onErrorScript, sandbox);
+      response = sandbox.output;
+    } else {
+      throw apiErr;
+    }
+  }
+  break;
+
 
         default:
           response = '[Bloco não reconhecido]';
