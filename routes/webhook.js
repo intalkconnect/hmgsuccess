@@ -12,7 +12,10 @@ async function markAsRead(phoneNumberId, accessToken, whatsappMessageId) {
   const payload = {
     messaging_product: "whatsapp",
     status: "read",
-    message_id: whatsappMessageId
+    message_id: whatsappMessageId,
+        typing_indicator: {
+      type: "text"
+    }
   };
   await axios.post(url, payload, {
     headers: {
