@@ -1,6 +1,6 @@
 import { substituteVariables } from '../utils/vars.js';
 import { supabase } from '../services/db.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+import { sendWhatsappMessage, uploadMediaToWhatsapp } from '../services/sendWhatsappMessage.js';
 import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
@@ -48,6 +48,14 @@ async function sendMessageByChannel(channel, to, type, content) {
       return sendWebchatMessage({ to, content });
     case 'whatsapp':
     default:
+      if ((type === 'image' || type === 'audio' || type === 'video' || type === 'document') && content.url) {
+        const mediaId = await uploadMediaToWhatsapp(content.url, type);
+        if (!mediaId) throw new Error('Erro ao fazer upload da mídia');
+        return sendWhatsappMessage({ to, type, content: { id: mediaId, caption: content.caption } });
+      }
+      if (type === 'text') {
+        return sendWhatsappMessage({ to, type, content: { body: content } });
+      }
       return sendWhatsappMessage({ to, type, content });
   }
 }
@@ -108,6 +116,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
         case 'audio':
         case 'video':
         case 'file':
+        case 'document':
+        case 'location':
           response = content;
           break;
 
@@ -215,23 +225,22 @@ export async function processMessage(message, flow, vars, rawUserId) {
           response = '[Bloco não reconhecido]';
       }
 
-if (
-  response &&
-  ['text', 'image', 'audio', 'video', 'file', 'document', 'location'].includes(block.type)
-) {
-  try {
-    await sendMessageByChannel(
-      sessionVars.channel || 'whatsapp',
-      userId,
-      block.type || 'text',
-      content
-    );
-    lastResponse = response;
-  } catch (err) {
-    console.error('Erro ao enviar mensagem:', err?.response?.data || err.message);
-  }
-}
-
+      if (
+        response &&
+        ['text', 'image', 'audio', 'video', 'file', 'document', 'location'].includes(block.type)
+      ) {
+        try {
+          await sendMessageByChannel(
+            sessionVars.channel || 'whatsapp',
+            userId,
+            block.type || 'text',
+            response
+          );
+          lastResponse = response;
+        } catch (err) {
+          console.error('Erro ao enviar mensagem:', err?.response?.data || err.message);
+        }
+      }
 
       let nextBlock = block.next ?? null;
       if (block.actions && Array.isArray(block.actions)) {
