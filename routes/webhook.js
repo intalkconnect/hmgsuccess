@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
 import { processMessage } from '../chatbot/engine.js';
+import { substituteVariables } from '../utils/vars.js';
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
@@ -44,7 +45,7 @@ export default async function webhookRoutes(fastify, opts) {
         now: new Date().toISOString(),
       };
 
-      const botResponse = processMessage(msgBody.toLowerCase(), latestFlow?.data, vars);
+      const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars);
       console.log(`🤖 Resposta do bot:`, botResponse);
 
       await supabase.from('messages').insert([
