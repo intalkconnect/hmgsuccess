@@ -93,7 +93,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
       // continua o loop para processar imediatamente o novo bloco
       continue;
     }
-    }
 
     // 2) Prepara conteúdo
     let content = '';
