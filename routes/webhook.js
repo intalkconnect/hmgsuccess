@@ -74,12 +74,13 @@ export default async function webhookRoutes(fastify, opts) {
         .limit(1)
         .single();
 
-      const vars = {
-        userPhone: from,
-        userName: profileName,
-        userMessage: msgBody,
-        now: new Date().toISOString(),
-      };
+const vars = {
+  userPhone: from,
+  userName: profileName,
+  userMessage: msgBody,
+  channel: 'whatsapp', // Aqui indicamos o canal
+  now: new Date().toISOString(),
+};
 
       const botResponse = await processMessage(msgBody.toLowerCase(), latestFlow?.data, vars, from);
       console.log(`🤖 Resposta do bot:`, botResponse);
