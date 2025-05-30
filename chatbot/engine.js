@@ -203,7 +203,10 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // determina próximo bloco
-      let nextBlock = null;
+// determina próximo bloco
+let nextBlock = null;
+
+// tenta encontrar uma ação válida
 for (const action of block.actions || []) {
   if (evaluateConditions(action.conditions, sessionVars)) {
     nextBlock = action.next;
@@ -211,15 +214,16 @@ for (const action of block.actions || []) {
   }
 }
 
-// Se não encontrou nenhum próximo válido, usar defaultNext
-if (!nextBlock) {
-  nextBlock = block.defaultNext || flow.onError?.content ? 'onerror' : null;
+// se nenhuma ação bateu, usa defaultNext se disponível
+if (!nextBlock && block.defaultNext) {
+  nextBlock = block.defaultNext;
 }
 
-// Se ainda não tem next e não espera resposta, loga
+// fallback final se nada for encontrado
 if (!nextBlock && block.awaitResponse === false) {
-  console.warn(`⚠️ Sem ação de saída para bloco ${currentBlockId}, e sem defaultNext`);
+  console.warn(`⚠️ Sem ação de saída ou defaultNext para bloco ${currentBlockId}`);
 }
+
 
 
       // atualiza sessão
