@@ -89,12 +89,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (!message) return null;
       sessionVars.lastUserMessage = message;
 
-      for (const action of awaiting.actions || []) {
-        if (evaluateConditions(action.conditions, sessionVars)) {
-          currentBlockId = action.next;
-          break;
-        }
-      }
+for (const action of awaiting.actions || []) {
+  if (evaluateConditions(action.conditions, sessionVars)) {
+    currentBlockId = substituteVariables(action.next, sessionVars);
+    break;
+  }
+}
+
 
       if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
         console.warn(`⚠️ Nenhuma ação válida em '${session.current_block}', indo para defaultNext: ${awaiting.defaultNext}`);
