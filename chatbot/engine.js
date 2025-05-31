@@ -247,10 +247,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
 if (
   nextBlock &&
   nextBlock !== 'onerror' &&
-  nextBlock !== sessionVars.previousBlock
+  (!sessionVars.previousBlock || nextBlock !== sessionVars.previousBlock)
 ) {
   sessionVars.previousBlock = currentBlockId;
 }
+
 
 
       await supabase.from('sessions').upsert([{
