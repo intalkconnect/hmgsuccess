@@ -1,4 +1,5 @@
 // engine/flowExecutor.js
+
 import { substituteVariables } from '../utils/vars.js';
 import axios from 'axios';
 import vm from 'vm';
@@ -9,69 +10,77 @@ import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 
 export async function runFlow({ message, flow, vars, rawUserId }) {
   const userId = `${rawUserId}@w.msgcli.net`;
+
+  // Se não houver fluxo válido, retorna mensagem de erro
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
-  // 1) Carrega sessão existente ou inicializa
+  // 1) Carrega (ou inicializa) a sessão do usuário
   const session = await loadSession(userId);
   let sessionVars = { ...vars, ...(session.vars || {}) };
   let currentBlockId = null;
 
-  // 2) Se já estiver em atendimento humano, bloqueia e salva
+  // 2) Se já estiver em atendimento humano, salva e interrompe
   if (session.current_block === 'atendimento_humano') {
     await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
     return null;
   }
 
-  // 3) Determina o bloco inicial
+  // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
+
+    // Se o bloco anterior foi “despedida”, reinicia o fluxo
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
-      sessionVars = {};
+      sessionVars = {}; 
       sessionVars.lastUserMessage = message;
     } else {
       const awaiting = flow.blocks[storedBlock];
       if (awaiting.awaitResponse) {
         if (!message) return null;
         sessionVars.lastUserMessage = message;
-        // Avalia condições
+
+        // Avalia as condições de saída do bloco anterior
         for (const action of awaiting.actions || []) {
           if (evaluateConditions(action.conditions, sessionVars)) {
             currentBlockId = action.next;
             break;
           }
         }
-        // Fallback defaultNext ou onerror
+        // Se não encontrou nenhuma ação válida, tenta defaultNext
         if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
           currentBlockId = awaiting.defaultNext;
         }
+        // Se ainda indefinido, cai em onerror
         if (!currentBlockId && flow.blocks.onerror) {
           currentBlockId = 'onerror';
         }
       } else {
+        // Se o bloco anterior não aguardava resposta, permanece nele
         currentBlockId = storedBlock;
       }
     }
   } else {
+    // Sem sessão existente: inicia no bloco “start”
     currentBlockId = flow.start;
   }
 
   let lastResponse = null;
 
-  // 4) Loop de execução dos blocos
+  // 4) Loop principal: para enquanto houver bloco a ser processado
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // 4.1) Atendimento humano: salva e encerra
+    // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
     if (block.type === 'human') {
       await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
       return null;
     }
 
-    // 4.2) Prepara conteúdo (texto ou JSON)
+    // 4.2) Prepara o conteúdo do bloco (texto ou JSON)
     let content = '';
     if (block.content != null) {
       content = typeof block.content === 'string'
@@ -79,7 +88,7 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
         : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
     }
 
-    // 4.3) Executa API call ou script, se aplicável
+    // 4.3) Caso seja API call ou script, executa e define “content”
     if (block.type === 'api_call') {
       const url = substituteVariables(block.url, sessionVars);
       const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
@@ -107,12 +116,12 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
     }
 
-    // 4.4) Envia mensagem, caso haja conteúdo
+    // 4.4) Se existir conteúdo e for tipo válidos, envia ao usuário e registra “outgoing”
     if (
       content &&
       ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
     ) {
-      // Marca como lido, se necessário
+      // Marca como lido, se houver
       await markAsReadIfNeeded(message);
 
       // Delay customizado
@@ -120,11 +129,23 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
         await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
       }
 
+      // Tenta enviar e registrar
       try {
-        // 4.4.1) Envio da mensagem
-        await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, block.type, content);
+        // 4.4.1) Envia a mensagem ao usuário
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          block.type,
+          content
+        );
 
-        // 4.4.2) Grava no banco como 'outgoing'
+        // 4.4.2) Registra no banco como “outgoing”
+        console.log('[flowExecutor] Gravando outgoing:', {
+          userId, 
+          type: block.type, 
+          content,
+          flowId: flow.id
+        });
         await logOutgoingMessage(userId, block.type, content, flow.id);
 
       } catch (mediaErr) {
@@ -133,25 +154,35 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
           ? `Aqui está seu conteúdo: ${content.url}`
           : `Aqui está sua mensagem: ${content}`;
 
-        // Fallback de texto simples
-        await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, 'text', fallback);
+        // 4.4.3) Envia fallback de texto simples
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          'text',
+          fallback
+        );
 
-        // Grava fallback no banco
+        // 4.4.4) Registra fallback como “outgoing”
+        console.log('[flowExecutor] Gravando fallback outgoing:', {
+          userId,
+          content: fallback,
+          flowId: flow.id
+        });
         await logOutgoingFallback(userId, fallback, flow.id);
       }
 
       lastResponse = content;
     }
 
-    // 4.5) Determina próximo bloco (onerror → previousBlock, etc.)
+    // 4.5) Determina o bloco seguinte (lembra de {previousBlock} e onerror)
     let nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
     let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
 
-    // Substitui {previousBlock}, se necessário
+    // Se houver placeholder “{previousBlock}”, substitui
     if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
       resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
     }
-    // Se não existir, cai em 'onerror'
+    // Se não existir no fluxo, cai em “onerror”
     if (!flow.blocks[resolvedBlock]) {
       resolvedBlock = 'onerror';
     }
@@ -165,17 +196,19 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       sessionVars.previousBlock = currentBlockId;
     }
 
-    // 4.7) Salva sessão (para próxima iteração ou próximo input)
+    // 4.7) Persiste a sessão com o bloco resolvido
     await saveSession(userId, resolvedBlock, flow.id, sessionVars);
 
-    // 4.8) Se o bloco aguarda resposta, encerra o loop (espera próximo input)
+    // 4.8) Se o bloco aguarda resposta, interrompe o loop (espera próximo input)
     if (block.awaitResponse) break;
 
-    // 4.9) Delay de saída, se configurado
+    // 4.9) Delay de saída, se configurado pelo bloco
     const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
-    if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
+    if (delay > 0) {
+      await new Promise(r => setTimeout(r, delay * 1000));
+    }
 
-    // 4.10) Avança para próximo bloco
+    // 4.10) Avança para o próximo bloco
     currentBlockId = resolvedBlock;
   }
 
