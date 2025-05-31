@@ -1,5 +1,6 @@
 // engine/messageLogger.js
 import { supabase } from '../services/db.js';
+import { randomUUID } from 'crypto';
 
 /**
  * Grava uma mensagem de saída (bot → usuário) na tabela `messages`.
@@ -11,8 +12,9 @@ import { supabase } from '../services/db.js';
  */
 export async function logOutgoingMessage(userId, type, content, flowId) {
   await supabase.from('messages').insert([{
+    id:                    randomUUID(),           // gera um UUID para whatsapp_message_id
     user_id:               userId,
-    whatsapp_message_id:   null,             // pode gerar UUID se precisar
+    whatsapp_message_id:   randomUUID(),           // agora NÃO é null
     direction:             'outgoing',
     type:                  type,
     content:               content,
@@ -28,12 +30,13 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
 }
 
 /**
- * Se quiser gravar um fallback quando falhar no envio de mídia:
+ * Grava um “fallback” quando falha no envio de mídia.
  */
 export async function logOutgoingFallback(userId, fallbackText, flowId) {
   await supabase.from('messages').insert([{
+    id:                    randomUUID(),
     user_id:               userId,
-    whatsapp_message_id:   null,
+    whatsapp_message_id:   randomUUID(),
     direction:             'outgoing',
     type:                  'text',
     content:               fallbackText,
