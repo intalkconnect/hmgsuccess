@@ -33,3 +33,21 @@ export function evaluateConditions(conditions = [], sessionVars = {}) {
   }
   return true;
 }
+
+export function determineNextBlock(block, sessionVars, flow, currentBlockId) {
+  for (const action of block.actions || []) {
+    if (evaluateConditions(action.conditions, sessionVars)) {
+      return action.next;
+    }
+  }
+
+  if (block.defaultNext && flow.blocks[block.defaultNext]) {
+    return block.defaultNext;
+  }
+
+  if (currentBlockId === 'onerror' && sessionVars.previousBlock) {
+    return sessionVars.previousBlock;
+  }
+
+  return null;
+}
