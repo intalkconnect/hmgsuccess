@@ -104,14 +104,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
         if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
           currentBlockId = awaiting.defaultNext;
         }
-        if (!currentBlockId && flow.blocks.onerror) {
-          currentBlockId = 'onerror';
+        if (!currentBlockId) {
+          return null;
         }
       } else {
         currentBlockId = storedBlock;
       }
       if (!currentBlockId) {
-        currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
+        return null;
       }
     }
   } else {
@@ -221,9 +221,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
         if (!nextBlock && block.defaultNext && flow.blocks[block.defaultNext]) {
           nextBlock = block.defaultNext;
         }
-        if (!nextBlock && flow.blocks.onerror) {
-          console.warn(`⚠️ Fallback para 'onerror'`);
-          nextBlock = 'onerror';
+        if (!nextBlock) {
+          break;
         }
       }
 
@@ -231,9 +230,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
         resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
       }
-      if (!flow.blocks[resolvedBlock] && flow.blocks.onerror) {
-        console.warn(`⚠️ Bloco '${resolvedBlock}' inválido. Usando 'onerror'.`);
-        resolvedBlock = 'onerror';
+      if (!flow.blocks[resolvedBlock]) {
+        break;
       }
 
       if (
@@ -260,7 +258,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
       currentBlockId = resolvedBlock;
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
-      return flow.onError?.content || 'Erro no fluxo do bot.';
+      return null;
     }
   }
 
