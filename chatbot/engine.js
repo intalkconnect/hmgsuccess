@@ -89,13 +89,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (!message) return null;
       sessionVars.lastUserMessage = message;
 
-for (const action of awaiting.actions || []) {
-  if (evaluateConditions(action.conditions, sessionVars)) {
-    currentBlockId = substituteVariables(action.next, sessionVars);
-    break;
-  }
-}
-
+      for (const action of awaiting.actions || []) {
+        if (evaluateConditions(action.conditions, sessionVars)) {
+          currentBlockId = substituteVariables(action.next, sessionVars);
+          break;
+        }
+      }
 
       if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
         console.warn(`⚠️ Nenhuma ação válida em '${session.current_block}', indo para defaultNext: ${awaiting.defaultNext}`);
@@ -209,17 +208,19 @@ for (const action of awaiting.actions || []) {
             fallback
           );
         }
+
         lastResponse = content;
       }
 
       // determina próximo bloco
       let nextBlock = null;
-for (const action of block.actions || []) {
-  if (evaluateConditions(action.conditions, sessionVars)) {
-    nextBlock = substituteVariables(action.next, sessionVars); // permite {previousBlock}
-    break;
-  }
-}
+      for (const action of block.actions || []) {
+        if (evaluateConditions(action.conditions, sessionVars)) {
+          nextBlock = substituteVariables(action.next, sessionVars);
+          break;
+        }
+      }
+
       if (!nextBlock && block.defaultNext && flow.blocks[block.defaultNext]) {
         nextBlock = block.defaultNext;
       }
@@ -233,16 +234,20 @@ for (const action of block.actions || []) {
         console.warn(`⚠️ Sem ação, defaultNext ou bloco de erro para '${currentBlockId}'`);
       }
 
-      // salva previousBlock antes de ir para o próximo
-if (nextBlock) {
-  sessionVars.previousBlock = currentBlockId;
-}
+      // salva previousBlock sempre que tiver transição
+      if (nextBlock) {
+        sessionVars.previousBlock = currentBlockId;
+      }
 
-
+      // resolve variáveis finais antes de salvar no banco
+      let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
+      if (typeof nextBlockResolved === 'string') {
+        nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
+      }
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
-        current_block: block.awaitResponse ? currentBlockId : nextBlock,
+        current_block: nextBlockResolved,
         last_flow_id: flow.id || null,
         vars: sessionVars,
         updated_at: new Date().toISOString(),
@@ -253,7 +258,7 @@ if (nextBlock) {
       const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
       if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
 
-      currentBlockId = nextBlock;
+      currentBlockId = nextBlockResolved;
 
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
@@ -263,3 +268,4 @@ if (nextBlock) {
 
   return lastResponse;
 }
+
