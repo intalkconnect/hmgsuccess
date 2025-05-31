@@ -116,7 +116,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
     }
 
   } else {
-    // primeira vez
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
       user_id: userId,
@@ -212,7 +211,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       }
 
-      // determina próximo bloco
       let nextBlock = null;
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
@@ -234,26 +232,20 @@ export async function processMessage(message, flow, vars, rawUserId) {
         console.warn(`⚠️ Sem ação, defaultNext ou bloco de erro para '${currentBlockId}'`);
       }
 
-      // salva previousBlock sempre que tiver transição
-if (nextBlock && nextBlock !== 'onerror') {
-  sessionVars.previousBlock = currentBlockId;
-}
+      let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
+      if (typeof nextBlockResolved === 'string' && nextBlockResolved.includes('{')) {
+        nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
+      }
 
+      if (!flow.blocks[nextBlockResolved] && flow.blocks.onerror) {
+        console.warn(`⚠️ Bloco '${nextBlockResolved}' não encontrado. Revertendo para 'onerror'.`);
+        nextBlockResolved = 'onerror';
+      }
 
-      // resolve variáveis finais antes de salvar no banco
-let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
-
-// substitui {previousBlock} se ainda estiver em string
-if (typeof nextBlockResolved === 'string' && nextBlockResolved.includes('{')) {
-  nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
-}
-
-// se após a substituição, o bloco não existe, e onerror existe, usa onerror
-if (!flow.blocks[nextBlockResolved] && flow.blocks.onerror) {
-  console.warn(`⚠️ Bloco '${nextBlockResolved}' não encontrado. Revertendo para 'onerror'.`);
-  nextBlockResolved = 'onerror';
-}
-
+      // salva previousBlock apenas se não estiver indo para o onerror
+      if (nextBlockResolved !== 'onerror') {
+        sessionVars.previousBlock = currentBlockId;
+      }
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
@@ -278,4 +270,3 @@ if (!flow.blocks[nextBlockResolved] && flow.blocks.onerror) {
 
   return lastResponse;
 }
-
