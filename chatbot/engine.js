@@ -65,6 +65,7 @@ async function sendMessageByChannel(channel, to, type, content) {
 /**
  * Processa mensagem do usuário, navega pelo flow e nunca deixa next undefined.
  */
+// processMessage corrigido com controle de previousBlock para evitar loops com onerror
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
 
@@ -105,7 +106,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         console.warn(`⚠️ Sem ação ou defaultNext válidos. Indo para 'onerror'`);
         currentBlockId = 'onerror';
       }
-
     } else {
       currentBlockId = session.current_block;
     }
@@ -114,7 +114,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
       console.warn(`⚠️ Nenhuma transição válida após resposta. Voltando para 'onerror' ou 'start'.`);
       currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
     }
-
   } else {
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
@@ -180,13 +179,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       if (content && ['text','image','audio','video','file','document','location','interactive'].includes(block.type)) {
-        if (message?.id) {
-          await markAsReadAndTyping(message.id);
-        }
-
-        if (block.sendDelayInSeconds) {
-          await new Promise(res => setTimeout(res, block.sendDelayInSeconds * 1000));
-        }
+        if (message?.id) await markAsReadAndTyping(message.id);
+        if (block.sendDelayInSeconds) await new Promise(res => setTimeout(res, block.sendDelayInSeconds * 1000));
 
         try {
           await sendMessageByChannel(
@@ -200,17 +194,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
           const fallback = (typeof content === 'object' && content.url)
             ? `Aqui está seu conteúdo: ${content.url}`
             : `Aqui está sua mensagem: ${content}`;
-          await sendMessageByChannel(
-            sessionVars.channel || 'whatsapp',
-            userId,
-            'text',
-            fallback
-          );
+          await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, 'text', fallback);
         }
 
         lastResponse = content;
       }
 
+      // define próximo bloco
       let nextBlock = null;
       for (const action of block.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
@@ -232,27 +222,24 @@ export async function processMessage(message, flow, vars, rawUserId) {
         console.warn(`⚠️ Sem ação, defaultNext ou bloco de erro para '${currentBlockId}'`);
       }
 
+      // valida e grava previousBlock para evitar loop
+      if (
+        currentBlockId !== 'onerror' &&
+        nextBlock !== 'onerror' &&
+        (!sessionVars.previousBlock || sessionVars.previousBlock !== nextBlock)
+      ) {
+        sessionVars.previousBlock = currentBlockId;
+      }
+
+      // resolve e valida bloco seguinte
       let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
       if (typeof nextBlockResolved === 'string' && nextBlockResolved.includes('{')) {
         nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
       }
-
       if (!flow.blocks[nextBlockResolved] && flow.blocks.onerror) {
         console.warn(`⚠️ Bloco '${nextBlockResolved}' não encontrado. Revertendo para 'onerror'.`);
         nextBlockResolved = 'onerror';
       }
-
-      // salva previousBlock apenas se não estiver indo para o onerror
-// Atualiza previousBlock se o destino for diferente do bloco anterior e não for 'onerror'
-if (
-  nextBlock &&
-  nextBlock !== 'onerror' &&
-  (!sessionVars.previousBlock || nextBlock !== sessionVars.previousBlock)
-) {
-  sessionVars.previousBlock = nextBlock;
-}
-
-
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
