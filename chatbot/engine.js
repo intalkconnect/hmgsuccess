@@ -66,16 +66,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
     .eq('user_id', userId)
     .single();
 
-  let sessionVars = { ...vars, ...(session?.vars || {}) };
+  let currentBlockId = null;
+  let sessionVars = { ...vars };
 
-  // ✅ Para tudo se o usuário está em atendimento humano
-  if (session?.current_block === 'atendimento_humano') {
+   if (session?.current_block === 'atendimento_humano') {
     console.log(`🙋‍♂️ Usuário em atendimento humano: ${userId}`);
     return null;
   }
-
-  let currentBlockId = null;
-  let sessionVars = { ...vars };
 
   if (session?.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
