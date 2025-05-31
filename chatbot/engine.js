@@ -122,7 +122,19 @@ export async function processMessage(message, flow, vars, rawUserId) {
     if (!currentBlockId) {
       currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
     }
-  } else {
+  } else { // <--- closes the session if
+    // Primeira execução: inicia no bloco 'boas-vindas'
+    currentBlockId = flow.start;
+    await supabase.from('sessions').upsert([{
+      user_id: userId,
+      current_block: currentBlockId,
+      last_flow_id: flow.id || null,
+      vars: sessionVars,
+      updated_at: new Date().toISOString(),
+    }]);
+  }
+
+  let lastResponse = null; {
     // Primeira execução: inicia no bloco 'boas-vindas'
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
