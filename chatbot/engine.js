@@ -235,9 +235,10 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // salva previousBlock sempre que tiver transição
-      if (nextBlock) {
-        sessionVars.previousBlock = currentBlockId;
-      }
+if (nextBlock && nextBlock !== 'onerror') {
+  sessionVars.previousBlock = currentBlockId;
+}
+
 
       // resolve variáveis finais antes de salvar no banco
 let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
