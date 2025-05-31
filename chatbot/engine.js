@@ -137,7 +137,18 @@ if (session?.current_block === 'atendimento_humano') {
 
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
-    if (!block) break;
+    if (block.type === 'human') {
+  await supabase.from('sessions').upsert([{
+    user_id: userId,
+    current_block: currentBlockId,
+    last_flow_id: flow.id || null,
+    vars: sessionVars,
+    updated_at: new Date().toISOString(),
+  }]);
+  console.log(`🙋‍♂️ Sessão atualizada para atendimento humano: ${userId}`);
+  return null;
+}
+
 
     let content = '';
     try {
