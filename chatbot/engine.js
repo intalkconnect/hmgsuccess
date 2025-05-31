@@ -203,16 +203,37 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // determina próximo bloco
-      let nextBlock = null;
-      for (const action of block.actions || []) {
-        if (evaluateConditions(action.conditions, sessionVars)) {
-          nextBlock = action.next;
-          break;
-        }
-      }
-      if (!nextBlock && block.awaitResponse === false) {
-        console.warn(`⚠️ Sem ação de saída para bloco ${currentBlockId}`);
-      }
+      // determina próximo bloco
+let nextBlock = null;
+
+// tenta encontrar uma ação válida
+for (const action of block.actions || []) {
+  if (evaluateConditions(action.conditions, sessionVars)) {
+    nextBlock = action.next;
+    break;
+  }
+}
+
+// se nenhuma ação bater, tenta usar defaultNext
+if (!nextBlock && block.defaultNext) {
+  if (flow.blocks[block.defaultNext]) {
+    nextBlock = block.defaultNext;
+  } else {
+    console.warn(`⚠️ defaultNext '${block.defaultNext}' não existe em flow.blocks`);
+  }
+}
+
+// se ainda não tiver um próximo válido, tenta 'onerror'
+if (!nextBlock && flow.blocks.onerror) {
+  console.warn(`⚠️ Nenhuma condição satisfeita e defaultNext inválido. Usando 'onerror'`);
+  nextBlock = 'onerror';
+}
+
+// se nada deu certo, loga
+if (!nextBlock && block.awaitResponse === false) {
+  console.warn(`⚠️ Sem ação, defaultNext ou bloco de erro para '${currentBlockId}'`);
+}
+
 
       // atualiza sessão
       await supabase.from('sessions').upsert([{
