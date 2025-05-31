@@ -35,19 +35,22 @@ export function evaluateConditions(conditions = [], sessionVars = {}) {
 }
 
 export function determineNextBlock(block, sessionVars, flow, currentBlockId) {
-  // 1) verifica ações condicionais
+  // Primeiro tenta ações condicionais
   for (const action of block.actions || []) {
     if (evaluateConditions(action.conditions, sessionVars)) {
       return action.next;
     }
   }
-  // 2) fallback defaultNext
+
+  // Se não encontrar, tenta defaultNext
   if (block.defaultNext && flow.blocks[block.defaultNext]) {
     return block.defaultNext;
   }
-  // 3) se estiver no onerror, retorna previousBlock
+
+  // Se estamos no onerror, retornamos previousBlock
   if (currentBlockId === 'onerror' && sessionVars.previousBlock) {
     return sessionVars.previousBlock;
   }
+
   return null;
 }
