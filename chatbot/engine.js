@@ -81,12 +81,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const storedBlock = session.current_block;
     sessionVars = { ...sessionVars, ...session.vars };
 
-    // 1️⃣ Atendimento humano: não responder
+    // Atendimento humano: não responder
     if (storedBlock === 'atendimento_humano') {
       return null;
+    }
 
-    // 2️⃣ Despedida: limpar e interromper processamento
-    } else if (storedBlock === 'despedida') {
+    // Despedida: limpar e interromper processamento
+    if (storedBlock === 'despedida') {
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: null,
@@ -95,54 +96,34 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
       return null;
+    }
 
-    // 3️⃣ Fluxo normal: retoma o bloco armazenado
+    // Fluxo normal: retoma o bloco armazenado
+    const awaiting = flow.blocks[storedBlock];
+    if (awaiting.awaitResponse) {
+      if (!message) return null;
+      sessionVars.lastUserMessage = message;
+
+      for (const action of awaiting.actions || []) {
+        if (evaluateConditions(action.conditions, sessionVars)) {
+          currentBlockId = action.next;
+          break;
+        }
+      }
+      if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+        currentBlockId = awaiting.defaultNext;
+      }
+      if (!currentBlockId && flow.blocks.onerror) {
+        currentBlockId = 'onerror';
+      }
     } else {
-      const awaiting = flow.blocks[storedBlock];
-      if (awaiting.awaitResponse) {
-        if (!message) return null;
-        sessionVars.lastUserMessage = message;
-
-        // Avalia ações condicionais para decidir o próximo bloco
-        for (const action of awaiting.actions || []) {
-          if (evaluateConditions(action.conditions, sessionVars)) {
-            currentBlockId = action.next;
-            break;
-          }
-        }
-        // Se nenhuma ação válida, usa defaultNext
-        if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-          currentBlockId = awaiting.defaultNext;
-        }
-        // Se ainda indefinido, fallback para onerror
-        if (!currentBlockId && flow.blocks.onerror) {
-          currentBlockId = 'onerror';
-        }
-      } else {
-        currentBlockId = storedBlock;
-      }
-      // Se ainda não definiu currentBlockId, faz fallback
-      if (!currentBlockId) {
-        currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
-      }
+      currentBlockId = storedBlock;
+    }
+    if (!currentBlockId) {
+      currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
     }
   } else {
     // Primeira execução: inicia no bloco 'boas-vindas'
-    currentBlockId = flow.start;
-    await supabase.from('sessions').upsert([{
-      user_id: userId,
-      current_block: currentBlockId,
-      last_flow_id: flow.id || null,
-      vars: sessionVars,
-      updated_at: new Date().toISOString(),
-    }]);
-  }
-  // Fim do bloco principal de sessão
-
-  let lastResponse = null;
-
-  // Loop de processamento dos blocos
-  while (currentBlockId) {
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
       user_id: userId,
