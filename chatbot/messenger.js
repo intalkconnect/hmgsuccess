@@ -6,10 +6,9 @@ export async function sendMessageByChannel(channel, to, type, content) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
-  const formatted = (type === 'text' && typeof content === 'string')
-    ? { body: content }
-    : content;
-  return sendWhatsappMessage({ to, type, content: formatted });
+  const whatsappContent =
+    (type === 'text' && typeof content === 'string') ? { body: content } : content;
+  return sendWhatsappMessage({ to, type, content: whatsappContent });
 }
 
 export async function markAsReadIfNeeded(message) {
