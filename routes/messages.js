@@ -1,111 +1,142 @@
+// src/routes/messageRoutes.js
+
+import dotenv from 'dotenv';
+import { supabase } from '../services/db.js';
 import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
-import axios from "axios";
-import dotenv from "dotenv";
+import axios from 'axios';
 dotenv.config();
 
 export default async function messageRoutes(fastify, opts) {
-  fastify.post("/send", async (req, reply) => {
-  const { to, type, content } = req.body;
-
-  try {
-    const data = await sendWhatsappMessage({ to, type, content });
-    reply.send(data);
-  } catch (err) {
-    const errorData = err.response?.data || err.message;
-    fastify.log.error(errorData);
-
-    if (
-      errorData?.error?.message?.includes("outside the allowed window") ||
-      errorData?.error?.code === 131047
-    ) {
-      reply.code(400).send({
-        error: "Mensagem fora da janela de 24 horas. Envie um template aprovado.",
-      });
-    } else {
-      reply.code(500).send("Erro ao enviar");
-    }
-  }
-});
-
-
-  fastify.post("/send/media", async (req, reply) => {
-    const { to, mediaType, mediaUrl, caption } = req.body;
-
-    const payload = {
-      messaging_product: "whatsapp",
-      to,
-      type: mediaType,
-      [mediaType]: {
-        link: mediaUrl,
-        caption: caption || "",
-      },
-    };
+  // ──────────────────────────────────────────────────────────────────────────
+  // 1) ENVIA TEXTO, MÍDIA OU LOCALIZAÇÃO (/message/send)
+  //    Usa sempre sendWhatsappMessage, que já cobre todos os tipos
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.post('/send', async (req, reply) => {
+    const { to, type, content } = req.body;
+    // Adiciona sufixo @w.msgcli.net para agrupar no mesmo user_id
+    const userId = `${to}@w.msgcli.net`;
 
     try {
-      const res = await axios.post(
-        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/messages",
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      reply.send(res.data);
+      // 1.1) Envia via sendWhatsappMessage (cobre text, image, audio, video, document, location)
+      const result = await sendWhatsappMessage({ to, type, content });
+      // 1.2) Extrai o ID retornado da API (geralmente em result.messages[0].id)
+      const whatsappMsgId = result.messages?.[0]?.id || null;
+
+      // 1.3) Grava no banco como outgoing
+      await supabase.from('messages').insert([{
+        user_id:             userId,
+        whatsapp_message_id: whatsappMsgId,
+        direction:           'outgoing',
+        type:                type,
+        content:             // Para texto, content é string. Para mídia, pode ser JSON.
+          typeof content === 'string' ? content : JSON.stringify(content),
+        timestamp:           new Date().toISOString(),
+        flow_id:             null,
+        agent_id:            null,
+        queue_id:            null,
+        status:              'sent',
+        metadata:            null,
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString()
+      }]);
+
+      // 1.4) Retorna a resposta original da Graph API
+      return reply.code(200).send(result);
+
     } catch (err) {
-      fastify.log.error(err.response?.data || err.message);
-      reply.code(500).send("Erro ao enviar mídia");
+      const errorData = err.response?.data || err.message;
+      fastify.log.error(errorData);
+
+      // Se for fora da janela de 24h
+      if (
+        errorData?.error?.message?.includes('outside the allowed window') ||
+        errorData?.error?.code === 131047
+      ) {
+        return reply.code(400).send({
+          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
+        });
+      }
+
+      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
     }
   });
 
-  fastify.post("/send/template", async (req, reply) => {
+  // ──────────────────────────────────────────────────────────────────────────
+  // 2) ENVIA TEMPLATE (/message/send/template)
+  //    Mantido separado, pois payload é específico para template
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.post('/send/template', async (req, reply) => {
     const { to, templateName, languageCode, components } = req.body;
+    const userId = `${to}@w.msgcli.net`;
 
     const payload = {
-      messaging_product: "whatsapp",
+      messaging_product: 'whatsapp',
       to,
-      type: "template",
+      type: 'template',
       template: {
-        name: templateName,
-        language: { code: languageCode },
-        components: components || [],
-      },
+        name:       templateName,
+        language:   { code: languageCode },
+        components: components || []
+      }
     };
 
     try {
       const res = await axios.post(
-        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/messages",
+        `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/messages`,
         payload,
         {
           headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            "Content-Type": "application/json",
-          },
+            'Content-Type': 'application/json'
+          }
         }
       );
-      reply.send(res.data);
+
+      const whatsappMsgId = res.data.messages?.[0]?.id || null;
+
+      // Grava template como outgoing
+      await supabase.from('messages').insert([{
+        user_id:             userId,
+        whatsapp_message_id: whatsappMsgId,
+        direction:           'outgoing',
+        type:                'template',
+        content:             templateName,
+        timestamp:           new Date().toISOString(),
+        flow_id:             null,
+        agent_id:            null,
+        queue_id:            null,
+        status:              'sent',
+        metadata:            JSON.stringify({ languageCode, components }),
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString()
+      }]);
+
+      return reply.code(200).send(res.data);
+
     } catch (err) {
       fastify.log.error(err.response?.data || err.message);
-      reply.code(500).send("Erro ao enviar template");
+      return reply.code(500).send({ error: 'Erro ao enviar template' });
     }
   });
 
-  fastify.get("/templates", async (req, reply) => {
+  // ──────────────────────────────────────────────────────────────────────────
+  // 3) LISTA TEMPLATES (/message/templates)
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/templates', async (req, reply) => {
     try {
       const res = await axios.get(
-        "https://graph.facebook.com/${process.env.API_VERSION}/YOUR_PHONE_NUMBER_ID/message_templates",
+        `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/message_templates`,
         {
           headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            "Content-Type": "application/json",
-          },
+            'Content-Type': 'application/json'
+          }
         }
       );
-      reply.send(res.data);
+      return reply.code(200).send(res.data);
     } catch (err) {
       fastify.log.error(err.response?.data || err.message);
-      reply.code(500).send("Erro ao listar templates");
+      return reply.code(500).send({ error: 'Erro ao listar templates' });
     }
   });
 }
