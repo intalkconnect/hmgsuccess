@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
-import { processMessage } from '../chatbot/engine.js';
+import { processMessage } from '../chatbot/index.js';
 import axios from 'axios';
 
 dotenv.config();
