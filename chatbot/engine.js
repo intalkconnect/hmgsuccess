@@ -5,9 +5,6 @@ import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
 import axios from 'axios';
 import vm from 'vm';
 
-/**
- * Avalia condições de ação
- */
 function evaluateConditions(conditions = [], sessionVars = {}) {
   for (const { type, variable, value } of conditions) {
     const actual = sessionVars[variable];
@@ -43,9 +40,6 @@ function evaluateConditions(conditions = [], sessionVars = {}) {
   return true;
 }
 
-/**
- * Envia mensagem no canal apropriado
- */
 async function sendMessageByChannel(channel, to, type, content) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
@@ -59,7 +53,6 @@ async function sendMessageByChannel(channel, to, type, content) {
   return sendWhatsappMessage({ to, type, content: whatsappContent });
 }
 
-// processMessage corrigido: onerror retorna ao previousBlock, tratamento de 'despedida' e 'atendimento_humano'
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
 
@@ -76,54 +69,51 @@ export async function processMessage(message, flow, vars, rawUserId) {
   let currentBlockId = null;
   let sessionVars = { ...vars };
 
-  // Se há sessão existente
   if (session?.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
     sessionVars = { ...sessionVars, ...session.vars };
 
-    // Atendimento humano: não responder
     if (storedBlock === 'atendimento_humano') {
       return null;
     }
 
-    // Despedida: limpar e interromper processamento
     if (storedBlock === 'despedida') {
+      currentBlockId = flow.start;
+      sessionVars = {};
+      sessionVars.lastUserMessage = message;
       await supabase.from('sessions').upsert([{
         user_id: userId,
-        current_block: null,
+        current_block: currentBlockId,
         last_flow_id: flow.id || null,
-        vars: {},
+        vars: sessionVars,
         updated_at: new Date().toISOString(),
       }]);
-      return null;
-    }
-
-    // Fluxo normal: retoma o bloco armazenado
-    const awaiting = flow.blocks[storedBlock];
-    if (awaiting.awaitResponse) {
-      if (!message) return null;
-      sessionVars.lastUserMessage = message;
-
-      for (const action of awaiting.actions || []) {
-        if (evaluateConditions(action.conditions, sessionVars)) {
-          currentBlockId = action.next;
-          break;
-        }
-      }
-      if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-        currentBlockId = awaiting.defaultNext;
-      }
-      if (!currentBlockId && flow.blocks.onerror) {
-        currentBlockId = 'onerror';
-      }
     } else {
-      currentBlockId = storedBlock;
+      const awaiting = flow.blocks[storedBlock];
+      if (awaiting.awaitResponse) {
+        if (!message) return null;
+        sessionVars.lastUserMessage = message;
+
+        for (const action of awaiting.actions || []) {
+          if (evaluateConditions(action.conditions, sessionVars)) {
+            currentBlockId = action.next;
+            break;
+          }
+        }
+        if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+          currentBlockId = awaiting.defaultNext;
+        }
+        if (!currentBlockId && flow.blocks.onerror) {
+          currentBlockId = 'onerror';
+        }
+      } else {
+        currentBlockId = storedBlock;
+      }
+      if (!currentBlockId) {
+        currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
+      }
     }
-    if (!currentBlockId) {
-      currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
-    }
-  } else { // <--- closes the session if
-    // Primeira execução: inicia no bloco 'boas-vindas'
+  } else {
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
       user_id: userId,
@@ -136,14 +126,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
   let lastResponse = null;
 
-  // Loop de processamento dos blocos
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
     let content = '';
     try {
-      // Prepara conteúdo do bloco
       if (block.content != null) {
         if (typeof block.content === 'string') {
           content = substituteVariables(block.content, sessionVars);
@@ -154,7 +142,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
 
-      // Executa ações especiais: api_call ou script
       switch (block.type) {
         case 'api_call': {
           const url = substituteVariables(block.url, sessionVars);
@@ -189,7 +176,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
       }
 
-      // Envia a mensagem para o usuário
       if (
         content &&
         ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
@@ -220,7 +206,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       }
 
-      // Determina o próximo bloco (tratando onerror → previousBlock)
       let nextBlock;
       if (currentBlockId === 'onerror' && sessionVars.previousBlock) {
         nextBlock = sessionVars.previousBlock;
@@ -241,7 +226,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
 
-      // Resolve placeholder {previousBlock}, se existir
       let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
       if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
         resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
@@ -251,7 +235,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         resolvedBlock = 'onerror';
       }
 
-      // Atualiza previousBlock para evitar loop
       if (
         currentBlockId !== 'onerror' &&
         resolvedBlock !== 'onerror' &&
@@ -260,7 +243,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
         sessionVars.previousBlock = currentBlockId;
       }
 
-      // Persiste sessão atualizada
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: resolvedBlock,
@@ -269,14 +251,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
 
-      // Se o bloco aguarda resposta, interrompe loop para aguardar próximo input
       if (block.awaitResponse) break;
 
-      // Delay de saída, se houver
       const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
       if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
 
-      // Atualiza currentBlockId para a próxima iteração
       currentBlockId = resolvedBlock;
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
