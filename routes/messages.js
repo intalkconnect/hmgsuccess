@@ -121,7 +121,7 @@ export default async function messageRoutes(fastify, opts) {
   fastify.get('/templates', async (req, reply) => {
     try {
       const res = await axios.get(
-        `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/message_templates`,
+        `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
         {
           headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
