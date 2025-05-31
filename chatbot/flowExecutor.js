@@ -5,6 +5,8 @@ import vm from 'vm';
 import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel, markAsReadIfNeeded } from './messenger.js';
+// ✅ Import extra para gravar "outgoing" no banco:
+import { supabase } from '../services/db.js';
 
 export async function runFlow({ message, flow, vars, rawUserId }) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
@@ -26,6 +28,7 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
   // 3) Determina o bloco inicial (retoma sessão ou inicia)
   if (session.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
+
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
       sessionVars = {};
@@ -35,14 +38,16 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       if (awaiting.awaitResponse) {
         if (!message) return null;
         sessionVars.lastUserMessage = message;
-        // avalia ações condicionais
+
+        // Avalia ações condicionais
         for (const action of awaiting.actions || []) {
           if (evaluateConditions(action.conditions, sessionVars)) {
             currentBlockId = action.next;
             break;
           }
         }
-        // fallback defaultNext ou onerror
+
+        // Fallback defaultNext ou onerror
         if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
           currentBlockId = awaiting.defaultNext;
         }
@@ -85,6 +90,7 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       const res = await axios({ method: block.method || 'GET', url, data: payload });
       sessionVars.responseStatus = res.status;
       sessionVars.responseData = res.data;
+
       if (block.script) {
         const sandbox = { response: res.data, vars: sessionVars, output: '' };
         vm.createContext(sandbox);
@@ -104,39 +110,94 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
     }
 
-    // 4.4) Envia mensagem se houver conteúdo
+    // 4.4) Envia mensagem, CASO haja conteúdo a ser mandado
     if (
       content &&
       ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
     ) {
+      // Marca como lido, se aplicável
       await markAsReadIfNeeded(message);
+
+      // Delay customizado, se configurado
       if (block.sendDelayInSeconds) {
         await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
       }
+
       try {
-        await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, block.type, content);
+        // Envia para o usuário pelo canal adequado
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          block.type,
+          content
+        );
+
+        // ─── 4.4.1) Grava mensagem “outgoing” no banco ───
+        await supabase.from('messages').insert([{
+          user_id:               userId,
+          whatsapp_message_id:   null,            // ou gere um UUID (ex.: uuidv4())
+          direction:             'outgoing',
+          type:                  block.type,
+          content:               content,
+          timestamp:             new Date().toISOString(),
+          flow_id:               flow.id || null,
+          agent_id:              null,            // bot não tem agent
+          queue_id:              null,            // se desejar ligar a alguma fila
+          status:                'sent',
+          metadata:              null,
+          created_at:            new Date().toISOString(),
+          updated_at:            new Date().toISOString()
+        }]);
+        // ────────────────────────────────────────────────────
       } catch (mediaErr) {
         console.error('❌ Falha ao enviar mídia:', mediaErr);
         const fallback = (typeof content === 'object' && content.url)
           ? `Aqui está seu conteúdo: ${content.url}`
           : `Aqui está sua mensagem: ${content}`;
-        await sendMessageByChannel(sessionVars.channel || 'whatsapp', userId, 'text', fallback);
+
+        // Envia fallback
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          'text',
+          fallback
+        );
+
+        // Grava fallback como “outgoing” no banco, caso queira registrar:
+        await supabase.from('messages').insert([{
+          user_id:               userId,
+          whatsapp_message_id:   null,
+          direction:             'outgoing',
+          type:                  'text',
+          content:               fallback,
+          timestamp:             new Date().toISOString(),
+          flow_id:               flow.id || null,
+          agent_id:              null,
+          queue_id:              null,
+          status:                'sent',
+          metadata:              JSON.stringify({ fallback: true }),
+          created_at:            new Date().toISOString(),
+          updated_at:            new Date().toISOString()
+        }]);
       }
+
       lastResponse = content;
     }
 
     // 4.5) Determina próximo bloco (incluindo onerror => previousBlock)
     let nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
-
     let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
+
+    // Substitui placeholders como {previousBlock}
     if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
       resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
     }
+    // Se o bloco não existir, cai em onerror
     if (!flow.blocks[resolvedBlock]) {
       resolvedBlock = 'onerror';
     }
 
-    // 4.6) Atualiza previousBlock para evitar looping
+    // 4.6) Atualiza previousBlock para evitar looping ciclico
     if (
       currentBlockId !== 'onerror' &&
       resolvedBlock !== 'onerror' &&
@@ -145,10 +206,10 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
       sessionVars.previousBlock = currentBlockId;
     }
 
-    // 4.7) Salva sessão com novo current_block e vars
+    // 4.7) Salva a sessão para o próximo ciclo
     await saveSession(userId, resolvedBlock, flow.id, sessionVars);
 
-    // 4.8) Interrompe se o bloco aguarda resposta
+    // 4.8) Se o bloco aguarda resposta, interrompe para esperar novo input
     if (block.awaitResponse) break;
 
     // 4.9) Delay de saída, se configurado
