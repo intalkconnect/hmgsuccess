@@ -91,7 +91,6 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
     // Despedida: reiniciar no próximo input
     if (storedBlock === 'despedida') {
-      // Não definir current_block como 'boas-vindas' imediatamente; limpa sessão
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: null,
@@ -99,10 +98,38 @@ export async function processMessage(message, flow, vars, rawUserId) {
         vars: {},
         updated_at: new Date().toISOString(),
       }]);
-      // Interrompe o processamento deste ciclo. No próximo input, começa em 'boas-vindas'.
       return null;
-    }
     } else {
+      // Fluxo normal: retoma bloco
+      const awaiting = flow.blocks[storedBlock];
+      if (awaiting.awaitResponse) {
+        if (!message) return null;
+        sessionVars.lastUserMessage = message;
+
+        // Avalia ações condicionais
+        for (const action of awaiting.actions || []) {
+          if (evaluateConditions(action.conditions, sessionVars)) {
+            currentBlockId = action.next;
+            break;
+          }
+        }
+        // Se nenhuma ação válida, usa defaultNext
+        if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+          currentBlockId = awaiting.defaultNext;
+        }
+        // Se ainda indefinido, fallback para onerror
+        if (!currentBlockId && flow.blocks.onerror) {
+          currentBlockId = 'onerror';
+        }
+      } else {
+        currentBlockId = storedBlock;
+      }
+      // Se ainda indefinido, fallback final
+      if (!currentBlockId) {
+        currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
+      }
+    }
+  } else {
       // Fluxo normal: retoma bloco
       const awaiting = flow.blocks[storedBlock];
       if (awaiting.awaitResponse) {
