@@ -243,9 +243,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // salva previousBlock apenas se não estiver indo para o onerror
-      if (nextBlockResolved !== 'onerror') {
-        sessionVars.previousBlock = currentBlockId;
-      }
+// Atualiza previousBlock se o destino for diferente do bloco anterior e não for 'onerror'
+if (
+  nextBlock &&
+  nextBlock !== 'onerror' &&
+  nextBlock !== sessionVars.previousBlock
+) {
+  sessionVars.previousBlock = currentBlockId;
+}
+
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
