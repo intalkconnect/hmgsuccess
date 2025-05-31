@@ -62,6 +62,7 @@ async function sendMessageByChannel(channel, to, type, content) {
   return sendWhatsappMessage({ to, type, content: whatsappContent });
 }
 
+// processMessage corrigido: onerror sempre retorna ao previousBlock
 export async function processMessage(message, flow, vars, rawUserId) {
   const userId = `${rawUserId}@c.wa.msginb.net`;
 
@@ -75,11 +76,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
     .eq('user_id', userId)
     .single();
 
-  // Inicializa currentBlockId e sessionVars
+  // Configurações iniciais
   let currentBlockId = null;
   let sessionVars = { ...vars };
 
-  // Retomada de sessão se existir bloco pendente
+  // Se há sessão existente
   if (session?.current_block && flow.blocks[session.current_block]) {
     const awaiting = flow.blocks[session.current_block];
     sessionVars = { ...sessionVars, ...session.vars };
@@ -88,36 +89,33 @@ export async function processMessage(message, flow, vars, rawUserId) {
       if (!message) return null;
       sessionVars.lastUserMessage = message;
 
-      // Verifica ações condicionais
+      // Avalia ações condicionais
       for (const action of awaiting.actions || []) {
         if (evaluateConditions(action.conditions, sessionVars)) {
           currentBlockId = action.next;
           break;
         }
       }
-
-      // Se nenhuma ação bateu, usa defaultNext
+      // Se nenhuma ação válida, usa defaultNext
       if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
         console.warn(`⚠️ Nenhuma ação válida em '${session.current_block}', indo para defaultNext: ${awaiting.defaultNext}`);
         currentBlockId = awaiting.defaultNext;
       }
-
-      // Se ainda nada, fallback para onerror
+      // Fallback para onerror
       if (!currentBlockId && flow.blocks.onerror) {
-        console.warn(`⚠️ Sem ação ou defaultNext válidos. Indo para 'onerror'`);
+        console.warn(`⚠️ Fallback para 'onerror'`);
         currentBlockId = 'onerror';
       }
     } else {
       currentBlockId = session.current_block;
     }
-
-    // Se currentBlockId indefinido, volta para onerror ou start
+    // Se ainda indefinido
     if (!currentBlockId) {
-      console.warn(`⚠️ Nenhuma transição válida após resposta. Voltando para 'onerror' ou 'start'.`);
+      console.warn(`⚠️ Sem transição válida, usando 'onerror' ou start`);
       currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
     }
   } else {
-    // Primeira vez no fluxo
+    // Primeira execução
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
       user_id: userId,
@@ -130,14 +128,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
   let lastResponse = null;
 
-  // Loop principal de processamento de blocos
+  // Loop de processamento
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
     let content = '';
     try {
-      // Prepara conteúdo do bloco
+      // Prepara conteúdo
       if (block.content != null) {
         if (typeof block.content === 'string') {
           content = substituteVariables(block.content, sessionVars);
@@ -148,7 +146,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
 
-      // Executa tipos especiais de bloco
+      // Executa tipos especiais
       switch (block.type) {
         case 'api_call': {
           const url = substituteVariables(block.url, sessionVars);
@@ -183,7 +181,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
           break;
       }
 
-      // Envia mensagem para o canal
+      // Envia mensagem
       if (content && ['text','image','audio','video','file','document','location','interactive'].includes(block.type)) {
         if (message?.id) await markAsReadAndTyping(message.id);
         if (block.sendDelayInSeconds) await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
@@ -201,40 +199,43 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       }
 
-      // Determina próximo bloco
-      let nextBlock = null;
-      for (const action of block.actions || []) {
-        if (evaluateConditions(action.conditions, sessionVars)) {
-          nextBlock = action.next;
-          break;
+      // Determina nextBlock
+      let nextBlock;
+      // Se estamos em onerror, forçamos retorno ao previousBlock
+      if (currentBlockId === 'onerror' && sessionVars.previousBlock) {
+        nextBlock = sessionVars.previousBlock;
+      } else {
+        // Avalia ações normalmente
+        nextBlock = null;
+        for (const action of block.actions || []) {
+          if (evaluateConditions(action.conditions, sessionVars)) {
+            nextBlock = action.next;
+            break;
+          }
+        }
+        // defaultNext
+        if (!nextBlock && block.defaultNext && flow.blocks[block.defaultNext]) {
+          nextBlock = block.defaultNext;
+        }
+        // fallback onerror
+        if (!nextBlock && flow.blocks.onerror) {
+          console.warn(`⚠️ Fallback para onerror`);
+          nextBlock = 'onerror';
         }
       }
 
-      // Se nenhuma ação bateu, usa defaultNext
-      if (!nextBlock && block.defaultNext && flow.blocks[block.defaultNext]) {
-        nextBlock = block.defaultNext;
-      }
-
-      // Se ainda nada, fallback para onerror
-      if (!nextBlock && flow.blocks.onerror) {
-        console.warn(`⚠️ Nenhuma condição satisfeita e defaultNext inválido. Usando 'onerror'`);
-        nextBlock = 'onerror';
-      }
-
-      // Resolve variáveis de nextBlock (incluindo {previousBlock})
+      // Resolve placeholder {previousBlock} se existir
       let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
       if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
         resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
       }
-
-      // Se bloco resolvido não existe, usa onerror
+      // Valida existência
       if (!flow.blocks[resolvedBlock] && flow.blocks.onerror) {
-        console.warn(`⚠️ Bloco '${resolvedBlock}' não encontrado. Revertendo para 'onerror'.`);
+        console.warn(`⚠️ Bloco '${resolvedBlock}' inválido. Usando 'onerror'.`);
         resolvedBlock = 'onerror';
       }
 
-      // Atualiza previousBlock para evitar loop: não grava se current ou next forem onerror,
-      // e se next for diferente do previous atual
+      // Atualiza previousBlock: só grava se current e next não forem onerror e diferente do stored
       if (
         currentBlockId !== 'onerror' &&
         resolvedBlock !== 'onerror' &&
@@ -243,7 +244,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         sessionVars.previousBlock = currentBlockId;
       }
 
-      // Salva sessão atualizada no banco
+      // Persiste sessão
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: resolvedBlock,
@@ -252,13 +253,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
 
-      // Se bloco aguarda resposta, sai do loop para esperar input do usuário
+      // Se aguarda resposta, pausa
       if (block.awaitResponse) break;
 
+      // Delay de saída, se houver
       const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
       if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
 
-      // Atualiza currentBlockId para a próxima iteração
       currentBlockId = resolvedBlock;
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
