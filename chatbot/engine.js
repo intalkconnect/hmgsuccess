@@ -240,10 +240,19 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // resolve variáveis finais antes de salvar no banco
-      let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
-      if (typeof nextBlockResolved === 'string') {
-        nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
-      }
+let nextBlockResolved = block.awaitResponse ? currentBlockId : nextBlock;
+
+// substitui {previousBlock} se ainda estiver em string
+if (typeof nextBlockResolved === 'string' && nextBlockResolved.includes('{')) {
+  nextBlockResolved = substituteVariables(nextBlockResolved, sessionVars);
+}
+
+// se após a substituição, o bloco não existe, e onerror existe, usa onerror
+if (!flow.blocks[nextBlockResolved] && flow.blocks.onerror) {
+  console.warn(`⚠️ Bloco '${nextBlockResolved}' não encontrado. Revertendo para 'onerror'.`);
+  nextBlockResolved = 'onerror';
+}
+
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
