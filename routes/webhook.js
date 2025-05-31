@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
-// 👇 importar runFlow em vez de processMessage
-import { runFlow } from '../chatbot/flowExecutor.js';
+// ✅ Agora importamos runFlow, não processMessage
+import { runFlow } from '../chatbot/engine/flowExecutor.js';
 import axios from 'axios';
 
 dotenv.config();
@@ -33,16 +33,16 @@ export default async function webhookRoutes(fastify, opts) {
 
     console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
 
-    const entry    = body.entry[0].changes[0].value;
-    const messages = entry.messages;
-    const contact  = entry.contacts?.[0];
-    const from     = contact?.wa_id;
+    const entry       = body.entry[0].changes[0].value;
+    const messages    = entry.messages;
+    const contact     = entry.contacts?.[0];
+    const from        = contact?.wa_id;
     const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
-      const msg   = messages[0];
-      const msgId = msg.id;
-      const msgType = msg.type;
+      const msg      = messages[0];
+      const msgId    = msg.id;
+      const msgType  = msg.type;
 
       // Normaliza payload do usuário para texto simples ou ID de interactive
       let userMessage = '';
@@ -90,32 +90,45 @@ export default async function webhookRoutes(fastify, opts) {
 
       // Prepara variáveis de sessão
       const vars = {
-        userPhone:      from,
-        userName:       profileName,
+        userPhone:       from,
+        userName:        profileName,
         lastUserMessage: userMessage,
-        channel:        'whatsapp',
-        now:            new Date().toISOString(),
-        lastMessageId:  msgId
+        channel:         'whatsapp',
+        now:             new Date().toISOString(),
+        lastMessageId:   msgId
       };
 
-      // ⚙️ Agora usamos runFlow em vez de processMessage
+      // ─── 1) Grava mensagem “incoming” na tabela `messages` ───
+      await supabase.from('messages').insert([{
+        user_id:             from,
+        whatsapp_message_id: msgId,
+        direction:           'incoming',
+        type:                msgType,
+        content:             userMessage,
+        timestamp:           new Date().toISOString(),
+        flow_id:             latestFlow?.data?.id || null,
+        agent_id:            null,
+        queue_id:            null,
+        status:              'received',
+        metadata:            null,
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString()
+      }]);
+      // ──────────────────────────────────────────────────────────
+
+      // Processa a mensagem no engine (execução do fluxo)
       const botResponse = await runFlow({
         message:    userMessage.toLowerCase(),
         flow:       latestFlow?.data,
         vars,
         rawUserId:  from
       });
+
       console.log('🤖 Resposta do bot:', botResponse);
 
-      // Salva no histórico
-      await supabase.from('messages').insert([{
-        user_id:             from,
-        whatsapp_message_id: msgId,
-        type:                msgType,
-        message:             userMessage,
-        response:            botResponse,
-        created_at:          new Date().toISOString()
-      }]);
+      // No seu front/histórico, você já guardou a “incoming”.
+      // A resposta do bot (outgoing) será gravada dentro do runFlow (fluxo), portanto
+      // não precisa gravar novamente aqui. Se quiser, pode apenas logar.
     }
 
     reply.code(200).send('EVENT_RECEIVED');
