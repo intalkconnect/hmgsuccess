@@ -101,6 +101,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
         vars: sessionVars,
         updated_at: new Date().toISOString(),
       }]);
+      // Não processa mais neste ciclo; aguarda próximo input
+      return null;
     } else {
       // Fluxo normal: retoma bloco
       const awaiting = flow.blocks[storedBlock];
@@ -288,6 +290,10 @@ export async function processMessage(message, flow, vars, rawUserId) {
       return flow.onError?.content || 'Erro no fluxo do bot.';
     }
   }
+
+  return lastResponse;
+}
+
 
   return lastResponse;
 }
