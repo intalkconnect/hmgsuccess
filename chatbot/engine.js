@@ -80,51 +80,55 @@ export async function processMessage(message, flow, vars, rawUserId) {
     .eq('user_id', userId)
     .single();
 
-  let currentBlockId = flow.start;
-  let sessionVars = { ...vars };
+  let currentBlockId = null;
+let sessionVars = { ...vars };
 
-  // retoma sessão se houver bloco pendente
-  if (session?.current_block && flow.blocks[session.current_block]) {
-    const awaiting = flow.blocks[session.current_block];
-    sessionVars = { ...sessionVars, ...session.vars };
+if (session?.current_block && flow.blocks[session.current_block]) {
+  const awaiting = flow.blocks[session.current_block];
+  sessionVars = { ...sessionVars, ...session.vars };
 
-if (awaiting.awaitResponse) {
-  if (!message) return null;
-  sessionVars.lastUserMessage = message;
+  if (awaiting.awaitResponse) {
+    if (!message) return null;
+    sessionVars.lastUserMessage = message;
 
-  // avalia condições das ações
-  for (const action of awaiting.actions || []) {
-    if (evaluateConditions(action.conditions, sessionVars)) {
-      currentBlockId = action.next;
-      break;
+    for (const action of awaiting.actions || []) {
+      if (evaluateConditions(action.conditions, sessionVars)) {
+        currentBlockId = action.next;
+        break;
+      }
     }
-  }
 
-  // se nenhuma ação foi satisfeita, usa defaultNext
-  if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-    console.warn(`⚠️ Nenhuma ação válida em '${session.current_block}', indo para defaultNext: ${awaiting.defaultNext}`);
-    currentBlockId = awaiting.defaultNext;
-  }
-
-  // se ainda não encontrou próximo, tenta 'onerror'
-  if (!currentBlockId && flow.blocks.onerror) {
-    console.warn(`⚠️ Sem ação ou defaultNext válidos. Indo para 'onerror'`);
-    currentBlockId = 'onerror';
-  }
-}
- else {
-      currentBlockId = session.current_block;
+    if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+      console.warn(`⚠️ Nenhuma ação válida em '${session.current_block}', indo para defaultNext: ${awaiting.defaultNext}`);
+      currentBlockId = awaiting.defaultNext;
     }
+
+    if (!currentBlockId && flow.blocks.onerror) {
+      console.warn(`⚠️ Sem ação ou defaultNext válidos. Indo para 'onerror'`);
+      currentBlockId = 'onerror';
+    }
+
   } else {
-    // primeira vez
-    await supabase.from('sessions').upsert([{
-      user_id: userId,
-      current_block: currentBlockId,
-      last_flow_id: flow.id || null,
-      vars: sessionVars,
-      updated_at: new Date().toISOString(),
-    }]);
+    currentBlockId = session.current_block;
   }
+
+  if (!currentBlockId) {
+    console.warn(`⚠️ Nenhuma transição válida após resposta. Voltando para 'onerror' ou 'start'.`);
+    currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
+  }
+
+} else {
+  // primeira vez
+  currentBlockId = flow.start;
+  await supabase.from('sessions').upsert([{
+    user_id: userId,
+    current_block: currentBlockId,
+    last_flow_id: flow.id || null,
+    vars: sessionVars,
+    updated_at: new Date().toISOString(),
+  }]);
+}
+
 
   let lastResponse = null;
 
