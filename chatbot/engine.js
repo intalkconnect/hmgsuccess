@@ -67,20 +67,16 @@ export async function processMessage(message, flow, vars, rawUserId) {
     .single();
 
   let currentBlockId = null;
-  let sessionVars = { ...vars };
+  let sessionVars = { ...vars, ...(session?.vars || {}) };
 
-   if (session?.current_block === 'atendimento_humano') {
+  // 🚫 Interrompe se em atendimento humano
+  if (session?.current_block === 'atendimento_humano') {
     console.log(`🙋‍♂️ Usuário em atendimento humano: ${userId}`);
     return null;
   }
 
   if (session?.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
-    sessionVars = { ...sessionVars, ...session.vars };
-
-    if (storedBlock === 'atendimento_humano') {
-      return null;
-    }
 
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
