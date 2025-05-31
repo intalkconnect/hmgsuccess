@@ -9,7 +9,7 @@ import { sendMessageByChannel, markAsReadIfNeeded } from './messenger.js';
 import { supabase } from '../services/db.js';
 
 export async function runFlow({ message, flow, vars, rawUserId }) {
-  const userId = `${rawUserId}@c.wa.msginb.net`;
+  const userId = `${rawUserId}@w.msgcli.net`;
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
