@@ -70,10 +70,18 @@ export async function processMessage(message, flow, vars, rawUserId) {
   let sessionVars = { ...vars, ...(session?.vars || {}) };
 
   // 🚫 Interrompe se em atendimento humano
-  if (session?.current_block === 'atendimento_humano') {
-    console.log(`🙋‍♂️ Usuário em atendimento humano: ${userId}`);
-    return null;
-  }
+if (session?.current_block === 'atendimento_humano') {
+  await supabase.from('sessions').upsert([{
+    user_id: userId,
+    current_block: 'atendimento_humano',
+    last_flow_id: flow.id || null,
+    vars: session?.vars || {},
+    updated_at: new Date().toISOString(),
+  }]);
+  console.log(`🙋‍♂️ Usuário em atendimento humano (bloqueado): ${userId}`);
+  return null;
+}
+
 
   if (session?.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
