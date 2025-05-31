@@ -7,15 +7,15 @@ export async function loadSession(userId) {
     .select('*')
     .eq('user_id', userId)
     .single();
-  return data || {};
+  return data || { current_block: null, vars: {} };
 }
 
 export async function saveSession(userId, currentBlock, flowId, vars) {
   await supabase.from('sessions').upsert([{
-    user_id: userId,
+    user_id:       userId,
     current_block: currentBlock,
-    last_flow_id: flowId,
+    last_flow_id:  flowId,
     vars,
-    updated_at: new Date().toISOString(),
+    updated_at:    new Date().toISOString()
   }]);
 }
