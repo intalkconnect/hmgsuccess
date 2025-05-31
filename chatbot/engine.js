@@ -213,13 +213,12 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
       // determina próximo bloco
       let nextBlock = null;
-      for (const action of block.actions || []) {
-        if (evaluateConditions(action.conditions, sessionVars)) {
-          nextBlock = substituteVariables(action.next, sessionVars); // permite {previousBlock}
-          break;
-        }
-      }
-
+for (const action of block.actions || []) {
+  if (evaluateConditions(action.conditions, sessionVars)) {
+    nextBlock = substituteVariables(action.next, sessionVars); // permite {previousBlock}
+    break;
+  }
+}
       if (!nextBlock && block.defaultNext && flow.blocks[block.defaultNext]) {
         nextBlock = block.defaultNext;
       }
@@ -234,9 +233,11 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // salva previousBlock antes de ir para o próximo
-      if (!block.awaitResponse && nextBlock) {
-        sessionVars.previousBlock = currentBlockId;
-      }
+if (nextBlock) {
+  sessionVars.previousBlock = currentBlockId;
+}
+
+
 
       await supabase.from('sessions').upsert([{
         user_id: userId,
