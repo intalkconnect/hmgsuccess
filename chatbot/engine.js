@@ -84,16 +84,15 @@ export async function processMessage(message, flow, vars, rawUserId) {
     const storedBlock = session.current_block;
     sessionVars = { ...sessionVars, ...session.vars };
 
-    // Atendimento humano: não responder
+    // 1) Atendimento humano: não responder e interromper
     if (storedBlock === 'atendimento_humano') {
       return null;
     }
 
-    // Despedida: reiniciar no próximo input
+    // 2) Despedida: resetar para o início e interromper
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
       sessionVars = { ...vars };
-      // Persiste reinício
       await supabase.from('sessions').upsert([{
         user_id: userId,
         current_block: currentBlockId,
@@ -101,40 +100,44 @@ export async function processMessage(message, flow, vars, rawUserId) {
         vars: sessionVars,
         updated_at: new Date().toISOString(),
       }]);
-      // Não processa mais neste ciclo; aguarda próximo input
+      // Sai imediatamente; no próximo input, o bot recomeçará em 'boas-vindas'
       return null;
-    } else {
-      // Fluxo normal: retoma bloco
-      const awaiting = flow.blocks[storedBlock];
-      if (awaiting.awaitResponse) {
-        if (!message) return null;
-        sessionVars.lastUserMessage = message;
+    }
 
-        // Avalia ações condicionais
-        for (const action of awaiting.actions || []) {
-          if (evaluateConditions(action.conditions, sessionVars)) {
-            currentBlockId = action.next;
-            break;
-          }
-        }
-        // Se nenhuma ação válida, usa defaultNext
-        if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-          currentBlockId = awaiting.defaultNext;
-        }
-        // Se ainda indefinido, fallback para onerror
-        if (!currentBlockId && flow.blocks.onerror) {
-          currentBlockId = 'onerror';
-        }
-      } else {
-        currentBlockId = storedBlock;
+    // 3) Fluxo normal: retoma do bloco armazenado
+    const awaiting = flow.blocks[storedBlock];
+    if (awaiting.awaitResponse) {
+      if (!message) {
+        return null;
       }
-      // Se ainda indefinido, fallback final
-      if (!currentBlockId) {
-        currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
+      sessionVars.lastUserMessage = message;
+
+      // Avalia ações condicionais
+      for (const action of awaiting.actions || []) {
+        if (evaluateConditions(action.conditions, sessionVars)) {
+          currentBlockId = action.next;
+          break;
+        }
       }
+      // Se nenhuma ação bateu, usa defaultNext
+      if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+        currentBlockId = awaiting.defaultNext;
+      }
+      // Se ainda indefinido, fallback para onerror
+      if (!currentBlockId && flow.blocks.onerror) {
+        currentBlockId = 'onerror';
+      }
+    } else {
+      // Se não aguardava resposta, permanece no mesmo bloco
+      currentBlockId = storedBlock;
+    }
+
+    // Se ainda não definiu currentBlockId, faz fallback
+    if (!currentBlockId) {
+      currentBlockId = flow.blocks.onerror ? 'onerror' : flow.start;
     }
   } else {
-    // Primeira execução: inicia no start
+    // Primeira execução: começa em 'boas-vindas'
     currentBlockId = flow.start;
     await supabase.from('sessions').upsert([{
       user_id: userId,
@@ -147,14 +150,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
 
   let lastResponse = null;
 
-  // Loop de processamento dos blocos
+  // Loop de processamento de blocos
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
     let content = '';
     try {
-      // Prepara conteúdo do bloco
+      // Prepara conteúdo do bloco (texto ou objeto)
       if (block.content != null) {
         if (typeof block.content === 'string') {
           content = substituteVariables(block.content, sessionVars);
@@ -165,7 +168,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
 
-      // Executa ações especiais: api_call ou script
+      // Executa blocos especiais (api_call ou script)
       switch (block.type) {
         case 'api_call': {
           const url = substituteVariables(block.url, sessionVars);
@@ -201,10 +204,13 @@ export async function processMessage(message, flow, vars, rawUserId) {
       }
 
       // Envia mensagem para o usuário
-      if (content && ['text','image','audio','video','file','document','location','interactive'].includes(block.type)) {
+      if (
+        content &&
+        ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
+      ) {
         if (message?.id) await markAsReadAndTyping(message.id);
         if (block.sendDelayInSeconds) {
-          await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
+          await new Promise(res => setTimeout(res, block.sendDelayInSeconds * 1000));
         }
         try {
           await sendMessageByChannel(
@@ -228,7 +234,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         lastResponse = content;
       }
 
-      // Determina nextBlock, levando em conta onerror -> previousBlock
+      // Determina nextBlock, tratando onerror -> previousBlock
       let nextBlock;
       if (currentBlockId === 'onerror' && sessionVars.previousBlock) {
         nextBlock = sessionVars.previousBlock;
@@ -249,7 +255,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         }
       }
 
-      // Resolve placeholder, se houver
+      // Resolve placeholders (como {previousBlock})
       let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
       if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
         resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
@@ -259,7 +265,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         resolvedBlock = 'onerror';
       }
 
-      // Atualiza previousBlock para evitar loop
+      // Atualiza previousBlock para evitar loops
       if (
         currentBlockId !== 'onerror' &&
         resolvedBlock !== 'onerror' &&
@@ -277,13 +283,14 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
 
-      // Se aguarda resposta, interrompe loop
+      // Se o bloco aguarda resposta, interrompe o loop para aguardar input
       if (block.awaitResponse) break;
 
-      // Delay de saída, se houver
+      // Delay de saída, caso especificado
       const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
       if (delay > 0) await new Promise(r => setTimeout(r, delay * 1000));
 
+      // Move para o próximo bloco
       currentBlockId = resolvedBlock;
     } catch (err) {
       console.error('Erro no bloco', currentBlockId, err);
@@ -294,6 +301,3 @@ export async function processMessage(message, flow, vars, rawUserId) {
   return lastResponse;
 }
 
-
-  return lastResponse;
-}
