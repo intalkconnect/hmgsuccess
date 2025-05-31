@@ -249,7 +249,7 @@ if (
   nextBlock !== 'onerror' &&
   (!sessionVars.previousBlock || nextBlock !== sessionVars.previousBlock)
 ) {
-  sessionVars.previousBlock = currentBlockId;
+  sessionVars.previousBlock = nextBlock;
 }
 
 
