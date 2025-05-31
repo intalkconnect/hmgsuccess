@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
-import { processMessage } from '../chatbot/index.js';
+// 👇 importar runFlow em vez de processMessage
+import { runFlow } from '../chatbot/engine/flowExecutor.js';
 import axios from 'axios';
 
 dotenv.config();
@@ -89,21 +90,21 @@ export default async function webhookRoutes(fastify, opts) {
 
       // Prepara variáveis de sessão
       const vars = {
-        userPhone:     from,
-        userName:      profileName,
+        userPhone:      from,
+        userName:       profileName,
         lastUserMessage: userMessage,
-        channel:       'whatsapp',
-        now:           new Date().toISOString(),
-        lastMessageId: msgId
+        channel:        'whatsapp',
+        now:            new Date().toISOString(),
+        lastMessageId:  msgId
       };
 
-      // Processa a mensagem no engine
-      const botResponse = await processMessage(
-        userMessage.toLowerCase(),
-        latestFlow?.data,
+      // ⚙️ Agora usamos runFlow em vez de processMessage
+      const botResponse = await runFlow({
+        message:    userMessage.toLowerCase(),
+        flow:       latestFlow?.data,
         vars,
-        from
-      );
+        rawUserId:  from
+      });
       console.log('🤖 Resposta do bot:', botResponse);
 
       // Salva no histórico
