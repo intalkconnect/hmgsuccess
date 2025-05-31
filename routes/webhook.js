@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
 // 👇 importar runFlow em vez de processMessage
-import { runFlow } from '../chatbot/engine/flowExecutor.js';
+import { runFlow } from '../chatbot/flowExecutor.js';
 import axios from 'axios';
 
 dotenv.config();
