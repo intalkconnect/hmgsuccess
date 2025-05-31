@@ -51,6 +51,7 @@ async function sendMessageByChannel(channel, to, type, content) {
     return sendWebchatMessage({ to, content });
   }
 
+  // Whatsapp: texto simples ou objeto multimídia/interactive
   let whatsappContent;
   if (type === 'text' && typeof content === 'string') {
     whatsappContent = { body: content };
@@ -103,7 +104,8 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
 
-      // Interrompe o processamento deste ciclo, esperando o próximo input para recomeçar em 'boas-vindas'
+      // Interrompe o processamento deste ciclo. 
+      // No próximo input do usuário, o fluxo recomeçará em 'boas-vindas'
       return null;
     }
 
@@ -296,7 +298,7 @@ export async function processMessage(message, flow, vars, rawUserId) {
         updated_at: new Date().toISOString(),
       }]);
 
-      // Se o bloco aguarda resposta, interrompe o loop para aguardar input
+      // Se o bloco aguarda resposta, interrompe o loop para esperar novo input
       if (block.awaitResponse) break;
 
       // Delay de saída, caso haja
