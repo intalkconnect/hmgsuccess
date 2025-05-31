@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { supabase } from '../services/db.js';
-// ✅ Agora importamos runFlow, não processMessage
-import { runFlow } from '../chatbot/flowExecutor.js';
+// Estamos usando o runFlow, que já acrescenta '@w.msgcli.net' internamente
+import { runFlow } from '../chatbot/engine/flowExecutor.js';
 import axios from 'axios';
 
 dotenv.config();
@@ -23,7 +23,7 @@ export default async function webhookRoutes(fastify, opts) {
   fastify.post('/', async (req, reply) => {
     const body = req.body;
 
-    // Ignora eventos de status (para evitar poluir o log)
+    // Ignora eventos de status (para não poluir o log)
     const hasStatusesOnly = !!body.entry?.[0]?.changes?.[0]?.value?.statuses;
     const hasMessages     = !!body.entry?.[0]?.changes?.[0]?.value?.messages;
 
@@ -36,7 +36,7 @@ export default async function webhookRoutes(fastify, opts) {
     const entry       = body.entry[0].changes[0].value;
     const messages    = entry.messages;
     const contact     = entry.contacts?.[0];
-    const from        = contact?.wa_id;
+    const from        = contact?.wa_id;               // ex.: "5521990286724"
     const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
@@ -88,19 +88,22 @@ export default async function webhookRoutes(fastify, opts) {
         .limit(1)
         .single();
 
-      // Prepara variáveis de sessão
+      // Prepara variáveis de sessão (aqui, rawUserId = from, sem suffix)
       const vars = {
-        userPhone:       from,
-        userName:        profileName,
-        lastUserMessage: userMessage,
-        channel:         'whatsapp',
-        now:             new Date().toISOString(),
-        lastMessageId:   msgId
+        userPhone:        from,
+        userName:         profileName,
+        lastUserMessage:  userMessage,
+        channel:          'whatsapp',
+        now:              new Date().toISOString(),
+        lastMessageId:    msgId
       };
 
       // ─── 1) Grava mensagem “incoming” na tabela `messages` ───
+      //    o user_id fica no formato correto: `${from}@w.msgcli.net`
+      const formattedUserId = `${from}@w.msgcli.net`;
+
       await supabase.from('messages').insert([{
-        user_id:             from,
+        user_id:             formattedUserId,
         whatsapp_message_id: msgId,
         direction:           'incoming',
         type:                msgType,
@@ -116,19 +119,18 @@ export default async function webhookRoutes(fastify, opts) {
       }]);
       // ──────────────────────────────────────────────────────────
 
-      // Processa a mensagem no engine (execução do fluxo)
+      // 2) Processa a mensagem no engine (runFlow usará internamente o mesmo `${from}@w.msgcli.net`)
       const botResponse = await runFlow({
         message:    userMessage.toLowerCase(),
         flow:       latestFlow?.data,
         vars,
-        rawUserId:  from
+        rawUserId:  from        // runFlow na sua lógica monta `${rawUserId}@w.msgcli.net`
       });
-
       console.log('🤖 Resposta do bot:', botResponse);
 
-      // No seu front/histórico, você já guardou a “incoming”.
-      // A resposta do bot (outgoing) será gravada dentro do runFlow (fluxo), portanto
-      // não precisa gravar novamente aqui. Se quiser, pode apenas logar.
+      // A gravação da mensagem “outgoing” (bot → usuário)
+      // já ocorre dentro do próprio runFlow (no flowExecutor.js),
+      // portanto não precisamos gravar novamente aqui.
     }
 
     reply.code(200).send('EVENT_RECEIVED');
