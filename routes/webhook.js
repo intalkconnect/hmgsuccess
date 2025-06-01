@@ -147,15 +147,14 @@ export default async function webhookRoutes(fastify) {
       console.log('🤖 Resposta do bot:', botResponse)
 
       // 🚀 Emissão da resposta do bot
-      if (io) {
-        const responsePayload = {
-          user_id: formattedUserId,
-          response: botResponse
-        }
-        console.log('📡 Emitindo bot_response:', responsePayload)
-        io.emit('bot_response', responsePayload)
-        io.to(`chat-${formattedUserId}`).emit('bot_response', responsePayload)
-      }
+// 🚀 Emissão como "new_message" se for uma resposta gravada (outgoing)
+if (io && botResponse?.id && botResponse?.direction === 'outgoing') {
+  console.log('📡 Emitindo new_message (outgoing):', botResponse)
+  io.emit('new_message', botResponse)
+  io.to(`chat-${formattedUserId}`).emit('new_message', botResponse)
+} else {
+  console.warn('⚠️ botResponse não tem estrutura esperada para emissão.')
+}
     }
 
     return reply.code(200).send('EVENT_RECEIVED')
