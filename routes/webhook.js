@@ -2,7 +2,9 @@
 
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
+// Estamos usando o runFlow, que já acrescenta '@w.msgcli.net' internamente
 import { runFlow } from '../chatbot/flowExecutor.js'
+import axios from 'axios'
 
 dotenv.config()
 
@@ -31,7 +33,7 @@ export default async function webhookRoutes(fastify, opts) {
       return reply.code(200).send('EVENT_RECEIVED')
     }
 
-    fastify.log.info('📩 Webhook POST recebido:', JSON.stringify(body, null, 2))
+    console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2))
 
     const entry    = body.entry[0].changes[0].value
     const messages = entry.messages
@@ -39,86 +41,69 @@ export default async function webhookRoutes(fastify, opts) {
     const from     = contact?.wa_id               // ex.: "5521990286724"
     const profileName = contact?.profile?.name || 'usuário'
 
-    if (!(messages && messages.length > 0 && from)) {
-      fastify.log.warn('[webhookRoutes] Mensagem ou remetente inválido.')
-      return reply.code(200).send('EVENT_RECEIVED')
-    }
+    if (messages && messages.length > 0 && from) {
+      const msg     = messages[0]
+      const msgId   = msg.id
+      const msgType = msg.type
 
-    const msg     = messages[0]
-    const msgId   = msg.id
-    const msgType = msg.type
-
-    // Normaliza payload do usuário para texto simples ou ID de interactive
-    let userMessage = ''
-    switch (msgType) {
-      case 'text':
-        userMessage = msg.text?.body || ''
-        break
-      case 'interactive':
-        if (msg.interactive.type === 'button_reply') {
-          userMessage = msg.interactive.button_reply.id
-        } else if (msg.interactive.type === 'list_reply') {
-          userMessage = msg.interactive.list_reply.id
+      // Normaliza payload do usuário para texto simples ou ID de interactive
+      let userMessage = ''
+      switch (msgType) {
+        case 'text':
+          userMessage = msg.text?.body || ''
+          break
+        case 'interactive':
+          if (msg.interactive.type === 'button_reply') {
+            userMessage = msg.interactive.button_reply.id
+          } else if (msg.interactive.type === 'list_reply') {
+            userMessage = msg.interactive.list_reply.id
+          }
+          break
+        case 'image':
+          userMessage = '[imagem recebida]'
+          break
+        case 'video':
+          userMessage = '[vídeo recebido]'
+          break
+        case 'audio':
+          userMessage = '[áudio recebido]'
+          break
+        case 'document':
+          userMessage = '[documento recebido]'
+          break
+        case 'location': {
+          const { latitude, longitude } = msg.location || {}
+          userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
+          break
         }
-        break
-      case 'image':
-        userMessage = '[imagem recebida]'
-        break
-      case 'video':
-        userMessage = '[vídeo recebido]'
-        break
-      case 'audio':
-        userMessage = '[áudio recebido]'
-        break
-      case 'document':
-        userMessage = '[documento recebido]'
-        break
-      case 'location': {
-        const { latitude, longitude } = msg.location || {}
-        userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
-        break
+        default:
+          userMessage = `[tipo não tratado: ${msgType}]`
       }
-      default:
-        userMessage = `[tipo não tratado: ${msgType}]`
-    }
 
-    fastify.log.info(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
+      console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
 
-    // 1) Carrega o último fluxo ativo
-    let latestFlow = null
-    try {
-      const { data, error } = await supabase
+      // Carrega o último fluxo publicado
+      const { data: latestFlow } = await supabase
         .from('flows')
         .select('*')
         .eq('active', true)
         .limit(1)
         .single()
 
-      if (error) {
-        fastify.log.error('[webhookRoutes] Erro ao buscar latestFlow:', error)
-      } else {
-        latestFlow = data
-        fastify.log.info('[webhookRoutes] latestFlow carregado:', latestFlow)
+      // Prepara variáveis de sessão (aqui, rawUserId = from, sem suffix)
+      const vars = {
+        userPhone:        from,
+        userName:         profileName,
+        lastUserMessage:  userMessage,
+        channel:          'whatsapp',
+        now:              new Date().toISOString(),
+        lastMessageId:    msgId
       }
-    } catch (e) {
-      fastify.log.error('[webhookRoutes] Exceção ao buscar latestFlow:', e)
-    }
 
-    // Prepara variáveis de sessão (rawUserId = from, sem sufixo)
-    const vars = {
-      userPhone:       from,
-      userName:        profileName,
-      lastUserMessage: userMessage,
-      channel:         'whatsapp',
-      now:             new Date().toISOString(),
-      lastMessageId:   msgId
-    }
+      // ─── 1) Grava mensagem “incoming” na tabela `messages` ───
+      //    o user_id fica no formato correto: `${from}@w.msgcli.net`
+      const formattedUserId = `${from}@w.msgcli.net`
 
-    const formattedUserId = `${from}@w.msgcli.net`
-
-    // 2) Grava mensagem “incoming” na tabela `messages`
-    let mensagemInseridaIncoming = null
-    try {
       const { data: insertedData, error: insertError } = await supabase
         .from('messages')
         .insert([{
@@ -141,9 +126,7 @@ export default async function webhookRoutes(fastify, opts) {
       if (insertError) {
         fastify.log.error('[webhookRoutes] Erro ao inserir mensagem incoming:', insertError)
       } else {
-        mensagemInseridaIncoming = insertedData[0]
-        fastify.log.info('[webhookRoutes] Mensagem incoming gravada:', mensagemInseridaIncoming)
-
+        const mensagemInseridaIncoming = insertedData[0]
         // Emite via Socket.IO para atualizar o front
         if (fastify.io) {
           fastify.io.emit('new_message', mensagemInseridaIncoming)
@@ -151,26 +134,22 @@ export default async function webhookRoutes(fastify, opts) {
                       .emit('new_message', mensagemInseridaIncoming)
         }
       }
-    } catch (e) {
-      fastify.log.error('[webhookRoutes] Exceção ao inserir mensagem incoming:', e)
-    }
+      // ──────────────────────────────────────────────────────────
 
-    // 3) Processa a mensagem no engine (runFlow)
-    let botResponse = null
-    try {
-      botResponse = await runFlow({
-        message:   userMessage.toLowerCase(),
-        flow:      latestFlow,
+      // 2) Processa a mensagem no engine (runFlow usará internamente o mesmo `${from}@w.msgcli.net`)
+      //    Agora passamos o `io` para que o runFlow possa emitir o outgoing
+      const botResponse = await runFlow({
+        message:    userMessage.toLowerCase(),
+        flow:       latestFlow,
         vars,
-        rawUserId: from   // runFlow monta `${rawUserId}@w.msgcli.net`
+        rawUserId:  from,        // runFlow monta `${rawUserId}@w.msgcli.net`
+        io:         fastify.io   // aqui passamos o Socket.IO para o runFlow
       })
-      fastify.log.info('[webhookRoutes] runFlow retornou:', botResponse)
-    } catch (flowExecError) {
-      fastify.log.error('[webhookRoutes] Erro ao executar runFlow:', flowExecError)
-    }
+      console.log('🤖 Resposta do bot:', botResponse)
 
-    // 4) A gravação e o envio do “outgoing” são feitos dentro de runFlow,
-    // então não duplicamos essa lógica aqui.
+      // A gravação e o envio do “outgoing” devem ser feitos dentro do runFlow,
+      // usando o `io` que passamos acima.
+    }
 
     return reply.code(200).send('EVENT_RECEIVED')
   })
