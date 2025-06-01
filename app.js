@@ -16,20 +16,13 @@ async function buildServer() {
 
   // 1) Habilita CORS
   await fastify.register(cors, {
-    origin: '*' // Em produção, restrinja ao domínio do front
+    origin: '*' // em produção, restrinja ao domínio do front
   })
 
-  // 2) Inicializa conexão com Supabase
+  // 2) Inicializa conexão com Supabase (sem subscrições Realtime)
   fastify.log.info('[initDB] Iniciando conexão com o Supabase...')
   await initDB()
   fastify.log.info('[initDB] Conexão com Supabase estabelecida.')
-
-  // 3) Registra as rotas existentes (sem nenhuma mudança)
-  fastify.log.info('[buildServer] Registrando rotas de webhook, messages e flow...')
-  fastify.register(webhookRoutes, { prefix: '/webhook' })
-  fastify.register(messageRoutes, { prefix: '/messages' })
-  fastify.register(flowRoutes, { prefix: '/flow' })
-  fastify.log.info('[buildServer] Rotas registradas com sucesso.')
 
   return fastify
 }
@@ -37,15 +30,18 @@ async function buildServer() {
 async function start() {
   const fastify = await buildServer()
 
-  // 4) Cria o servidor Socket.IO acoplado ao fastify.server
-  fastify.log.info('[start] Configurando Socket.IO sobre o mesmo servidor HTTP...')
+  // 3) Cria o servidor Socket.IO atrelado ao mesmo HTTP do Fastify
+  fastify.log.info('[start] Configurando Socket.IO sobre o servidor Fastify...')
   const io = new IOServer(fastify.server, {
     cors: {
-      origin: '*' // Em produção, defina só o domínio do front
+      origin: '*' // em produção, restrinja ao domínio do front
     }
   })
 
-  // 5) Lógica de conexão Socket.IO
+  // 4) Anexa o io ao fastify para que as rotas possam usá‐lo
+  fastify.decorate('io', io)
+
+  // 5) Lógica de conexão Socket.IO (para debug/rooms)
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`)
 
@@ -64,69 +60,17 @@ async function start() {
     })
   })
 
-  // 6) Inscrição no Supabase Realtime (INSERT e UPDATE em “messages”)
-  if (!supabase) {
-    fastify.log.error('[Realtime] Supabase não inicializado antes de inscrever no Realtime')
-  } else {
-    fastify.log.info('[Realtime] Inscrevendo no canal Realtime para INSERT em public.messages...')
-    // 6.1) INSERTs
-    await supabase
-      .channel('socketio-messages-insert')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          const novaMsg = payload.new
-          fastify.log.info('[Realtime] 📥 Novo INSERT em messages:', novaMsg)
+  // 6) Registra as rotas **depois** que o io estiver disponível
+  fastify.log.info('[start] Registrando rotas de webhook, messages e flow...')
+  fastify.register(webhookRoutes, { prefix: '/webhook' })
+  fastify.register(messageRoutes, { prefix: '/messages' })
+  fastify.register(flowRoutes, { prefix: '/flow' })
+  fastify.log.info('[start] Rotas registradas com sucesso.')
 
-          // Broadcast para todos os conectados
-          fastify.log.info('[Socket.IO] Emitindo evento new_message para todos os clientes')
-          io.emit('new_message', novaMsg)
-
-          // Envia apenas para a sala daquele user_id
-          fastify.log.info(`[Socket.IO] Emitindo new_message para sala chat-${novaMsg.user_id}`)
-          io.to(`chat-${novaMsg.user_id}`).emit('new_message', novaMsg)
-        }
-      )
-      .subscribe()
-      .then(() => {
-        fastify.log.info('[Realtime] Inscrição para INSERT em messages concluída com sucesso.')
-      })
-      .catch((err) => {
-        fastify.log.error('[Realtime] Falha ao inscrever INSERT em messages:', err)
-      })
-
-    fastify.log.info('[Realtime] Inscrevendo no canal Realtime para UPDATE em public.messages...')
-    // 6.2) UPDATEs
-    await supabase
-      .channel('socketio-messages-update')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages' },
-        (payload) => {
-          const updatedMsg = payload.new
-          fastify.log.info('[Realtime] 🔄 UPDATE em messages:', updatedMsg)
-
-          fastify.log.info('[Socket.IO] Emitindo evento update_message para todos os clientes')
-          io.emit('update_message', updatedMsg)
-
-          fastify.log.info(`[Socket.IO] Emitindo update_message para sala chat-${updatedMsg.user_id}`)
-          io.to(`chat-${updatedMsg.user_id}`).emit('update_message', updatedMsg)
-        }
-      )
-      .subscribe()
-      .then(() => {
-        fastify.log.info('[Realtime] Inscrição para UPDATE em messages concluída com sucesso.')
-      })
-      .catch((err) => {
-        fastify.log.error('[Realtime] Falha ao inscrever UPDATE em messages:', err)
-      })
-  }
-
-  // 7) Inicia o Fastify (que já carrega o Socket.IO via fastify.server)
+  // 7) Inicia o Fastify (HTTP + Socket.IO)
   const PORT = process.env.PORT || 3000
   try {
-    fastify.log.info(`[start] Iniciando servidor HTTP + Socket.IO na porta ${PORT}...`)
+    fastify.log.info(`[start] Iniciando servidor na porta ${PORT} (HTTP + Socket.IO)...`)
     await fastify.listen({ port: PORT, host: '0.0.0.0' })
     fastify.log.info(`[start] Servidor rodando em http://0.0.0.0:${PORT}`)
   } catch (err) {
