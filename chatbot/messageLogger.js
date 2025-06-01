@@ -2,6 +2,7 @@
 import { supabase } from '../services/db.js'
 import { randomUUID } from 'crypto'
 
+// chatbot/messageLogger.js
 export async function logOutgoingMessage(userId, type, content, flowId) {
   const { data, error } = await supabase.from('messages').insert([{
     user_id: userId,
@@ -17,17 +18,15 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     metadata: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
-  }]).select('*')
+  }]).select('*') // 🔁 Garante retorno completo
 
   if (error) {
     console.error('❌ Erro ao gravar outgoing:', error)
     return null
   }
 
-  return data[0]
+  return data?.[0] || null // 🔁 Retorna registro inteiro (com id e direction)
 }
-
-
 
 /**
  * Grava um “fallback” quando falha no envio de mídia.
