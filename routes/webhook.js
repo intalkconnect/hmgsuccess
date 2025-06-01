@@ -1,100 +1,94 @@
-// src/routes/webhook.js
+import dotenv from 'dotenv';
+import { supabase } from '../services/db.js';
+// Estamos usando o runFlow, que já acrescenta '@w.msgcli.net' internamente
+import { runFlow } from '../chatbot/flowExecutor.js';
+import axios from 'axios';
 
-import dotenv from 'dotenv'
-import { supabase } from '../services/db.js'
-// runFlow permanece responsável por processar e gravar a resposta
-import { runFlow } from '../chatbot/flowExecutor.js'
-import axios from 'axios'
-
-dotenv.config()
+dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
   // Verificação do Webhook
   fastify.get('/', async (req, reply) => {
-    const mode      = req.query['hub.mode']
-    const token     = req.query['hub.verify_token']
-    const challenge = req.query['hub.challenge']
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
 
     if (mode && token === process.env.VERIFY_TOKEN) {
-      return reply.code(200).send(challenge)
+      return reply.code(200).send(challenge);
     }
-    return reply.code(403).send('Forbidden')
-  })
+    return reply.code(403).send('Forbidden');
+  });
 
   // Processamento das mensagens recebidas
   fastify.post('/', async (req, reply) => {
-    const body = req.body
+    const body = req.body;
 
-    // Ignora eventos que só trazem status
-    const hasStatusesOnly = !!body.entry?.[0]?.changes?.[0]?.value?.statuses
-    const hasMessages     = !!body.entry?.[0]?.changes?.[0]?.value?.messages
+    // Ignora eventos de status (para não poluir o log)
+    const hasStatusesOnly = !!body.entry?.[0]?.changes?.[0]?.value?.statuses;
+    const hasMessages     = !!body.entry?.[0]?.changes?.[0]?.value?.messages;
 
     if (!hasMessages || hasStatusesOnly) {
-      return reply.code(200).send('EVENT_RECEIVED')
+      return reply.code(200).send('EVENT_RECEIVED');
     }
 
-    fastify.log.info('📩 Webhook POST recebido:', JSON.stringify(body, null, 2))
+    console.log('📩 Webhook POST recebido:', JSON.stringify(body, null, 2));
 
-    const entry    = body.entry[0].changes[0].value
-    const messages = entry.messages
-    const contact  = entry.contacts?.[0]
-    const from     = contact?.wa_id               // ex.: "5521990286724"
-    const profileName = contact?.profile?.name || 'usuário'
+    const entry       = body.entry[0].changes[0].value;
+    const messages    = entry.messages;
+    const contact     = entry.contacts?.[0];
+    const from        = contact?.wa_id;               // ex.: "5521990286724"
+    const profileName = contact?.profile?.name || 'usuário';
 
     if (messages && messages.length > 0 && from) {
-      const msg     = messages[0]
-      const msgId   = msg.id
-      const msgType = msg.type
+      const msg      = messages[0];
+      const msgId    = msg.id;
+      const msgType  = msg.type;
 
       // Normaliza payload do usuário para texto simples ou ID de interactive
-      let userMessage = ''
+      let userMessage = '';
       switch (msgType) {
         case 'text':
-          userMessage = msg.text?.body || ''
-          break
+          userMessage = msg.text?.body || '';
+          break;
         case 'interactive':
           if (msg.interactive.type === 'button_reply') {
-            userMessage = msg.interactive.button_reply.id
+            userMessage = msg.interactive.button_reply.id;
           } else if (msg.interactive.type === 'list_reply') {
-            userMessage = msg.interactive.list_reply.id
+            userMessage = msg.interactive.list_reply.id;
           }
-          break
+          break;
         case 'image':
-          userMessage = '[imagem recebida]'
-          break
+          userMessage = '[imagem recebida]';
+          break;
         case 'video':
-          userMessage = '[vídeo recebido]'
-          break
+          userMessage = '[vídeo recebido]';
+          break;
         case 'audio':
-          userMessage = '[áudio recebido]'
-          break
+          userMessage = '[áudio recebido]';
+          break;
         case 'document':
-          userMessage = '[documento recebido]'
-          break
+          userMessage = '[documento recebido]';
+          break;
         case 'location': {
-          const { latitude, longitude } = msg.location || {}
-          userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
-          break
+          const { latitude, longitude } = msg.location || {};
+          userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`;
+          break;
         }
         default:
-          userMessage = `[tipo não tratado: ${msgType}]`
+          userMessage = `[tipo não tratado: ${msgType}]`;
       }
 
-      fastify.log.info(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
+      console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage);
 
       // Carrega o último fluxo publicado
-      const { data: latestFlow, error: flowFetchError } = await supabase
+      const { data: latestFlow } = await supabase
         .from('flows')
         .select('*')
         .eq('active', true)
         .limit(1)
-        .single()
+        .single();
 
-      if (flowFetchError) {
-        fastify.log.error('[webhookRoutes] Erro ao buscar latestFlow:', flowFetchError)
-      }
-
-      // Prepara variáveis de sessão (rawUserId = from, sem sufixo)
+      // Prepara variáveis de sessão (aqui, rawUserId = from, sem suffix)
       const vars = {
         userPhone:        from,
         userName:         profileName,
@@ -102,85 +96,43 @@ export default async function webhookRoutes(fastify, opts) {
         channel:          'whatsapp',
         now:              new Date().toISOString(),
         lastMessageId:    msgId
-      }
-
-      const formattedUserId = `${from}@w.msgcli.net`
+      };
 
       // ─── 1) Grava mensagem “incoming” na tabela `messages` ───
-      let mensagemInseridaIncoming = null
-      try {
-        const { data: insertedData, error: insertError } = await supabase
-          .from('messages')
-          .insert([{
-            user_id:             formattedUserId,
-            whatsapp_message_id: msgId,
-            direction:           'incoming',
-            type:                msgType,
-            content:             userMessage,
-            timestamp:           new Date().toISOString(),
-            flow_id:             latestFlow?.id || null,
-            agent_id:            null,
-            queue_id:            null,
-            status:              'received',
-            metadata:            null,
-            created_at:          new Date().toISOString(),
-            updated_at:          new Date().toISOString()
-          }])
-          .select()
+      //    o user_id fica no formato correto: `${from}@w.msgcli.net`
+      const formattedUserId = `${from}@w.msgcli.net`;
 
-        if (insertError) {
-          fastify.log.error('[webhookRoutes] Erro ao inserir mensagem incoming:', insertError)
-        } else {
-          mensagemInseridaIncoming = insertedData[0]
-          fastify.log.info('[webhookRoutes] Mensagem incoming gravada:', mensagemInseridaIncoming)
+      await supabase.from('messages').insert([{
+        user_id:             formattedUserId,
+        whatsapp_message_id: msgId,
+        direction:           'incoming',
+        type:                msgType,
+        content:             userMessage,
+        timestamp:           new Date().toISOString(),
+        flow_id:             latestFlow?.data?.id || null,
+        agent_id:            null,
+        queue_id:            null,
+        status:              'received',
+        metadata:            null,
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString()
+      }]);
+      // ──────────────────────────────────────────────────────────
 
-          // ─── EMIT: new_message (incoming) ───
-          if (fastify.io) {
-            fastify.io.emit('new_message', mensagemInseridaIncoming)
-            fastify.io
-              .to(`chat-${mensagemInseridaIncoming.user_id}`)
-              .emit('new_message', mensagemInseridaIncoming)
-          }
-        }
-      } catch (e) {
-        fastify.log.error('[webhookRoutes] Exceção ao inserir mensagem incoming:', e)
-      }
-      // ─────────────────────────────────────────────
-
-      // ─── 2) Emit: bot_processing ───
-      if (fastify.io) {
-        fastify.io.emit('bot_processing', {
-          user_id: formattedUserId,
-          status:  'processing'
-        })
-        fastify.io
-          .to(`chat-${formattedUserId}`)
-          .emit('bot_processing', {
-            user_id: formattedUserId,
-            status:  'processing'
-          })
-      }
-
-      // ─── 3) Processa a mensagem no engine (runFlow) ───
+      // 2) Processa a mensagem no engine (runFlow usará internamente o mesmo `${from}@w.msgcli.net`)
       const botResponse = await runFlow({
         message:    userMessage.toLowerCase(),
-        flow:       latestFlow,
+        flow:       latestFlow?.data,
         vars,
-        rawUserId:  from        // runFlow monta `${rawUserId}@w.msgcli.net`
-      })
-      fastify.log.info('🤖 Resposta do bot:', botResponse)
+        rawUserId:  from        // runFlow na sua lógica monta `${rawUserId}@w.msgcli.net`
+      });
+      console.log('🤖 Resposta do bot:', botResponse);
 
-      // ─── 4) Emit: new_message (outgoing) ───
-      if (fastify.io) {
-        fastify.io.emit('new_message', botResponse)
-        fastify.io
-          .to(`chat-${formattedUserId}`)
-          .emit('new_message', botResponse)
-      }
-
-      // Observação: a gravação do outgoing e o envio ao WhatsApp continuam dentro de runFlow
+      // A gravação da mensagem “outgoing” (bot → usuário)
+      // já ocorre dentro do próprio runFlow (no flowExecutor.js),
+      // portanto não precisamos gravar novamente aqui.
     }
 
-    return reply.code(200).send('EVENT_RECEIVED')
-  })
+    reply.code(200).send('EVENT_RECEIVED');
+  });
 }
