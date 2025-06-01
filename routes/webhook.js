@@ -84,7 +84,7 @@ export default async function webhookRoutes(fastify, opts) {
       const { data: latestFlow } = await supabase
         .from('flows')
         .select('*')
-        .order('created_at', { ascending: false })
+        .eq('active', true)
         .limit(1)
         .single();
 
