@@ -29,7 +29,10 @@ export default async function messageRoutes(fastify, opts) {
         whatsapp_message_id: whatsappMsgId,
         direction:           'outgoing',
         type,                                  // ex: 'text', 'image', 'interactive', ...
-        content:             JSON.stringify(content),
+        content: type === 'text' && typeof content === 'object' && content.body
+  ? content.body
+  : JSON.stringify(content),
+
         timestamp:           new Date().toISOString(),
         flow_id:             null,
         agent_id:            null,
