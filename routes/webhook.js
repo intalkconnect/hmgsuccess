@@ -124,7 +124,8 @@ export default async function webhookRoutes(fastify) {
         message: userMessage.toLowerCase(),
         flow: latestFlow?.data,
         vars,
-        rawUserId: from
+        rawUserId: from,
+        io
       })
 
       // 🚀 Emite resposta do bot (como "new_message")
