@@ -10,35 +10,32 @@ import { randomUUID } from 'crypto';
  * @param {string|object} content - Conteúdo (texto ou JSON para mídia)
  * @param {string|null} flowId - ID do fluxo que disparou esta mensagem
  */
-export async function logOutgoingMessage(userId, type, content, flowId) {
-  const { data, error } = await supabase
-    .from('messages')
-    .insert([{
-      id:                  randomUUID(),
-      user_id:             userId,
-      whatsapp_message_id: randomUUID(),
-      direction:           'outgoing',
-      type,
-      content,
-      timestamp:           new Date().toISOString(),
-      flow_id:             flowId || null,
-      agent_id:            null,
-      queue_id:            null,
-      status:              'sent',
-      metadata:            null,
-      created_at:          new Date().toISOString(),
-      updated_at:          new Date().toISOString()
-    }])
-    .select('*')
-    .single();
+// messageLogger.js
 
-  if (error) {
-    console.error('[logOutgoingMessage] erro ao inserir mensagem:', error);
-    return null;
+export async function logOutgoingMessage(userId, type, content, flowId) {
+  const outgoingMessage = {
+    id:                  randomUUID(),
+    user_id:             userId,
+    whatsapp_message_id: randomUUID(),
+    direction:           'outgoing',
+    type,
+    content,
+    timestamp:           new Date().toISOString(),
+    flow_id:             flowId || null,
+    agent_id:            null,
+    queue_id:            null,
+    status:              'sent',
+    metadata:            null,
+    created_at:          new Date().toISOString(),
+    updated_at:          new Date().toISOString()
   }
 
-  return data;
+  const { data, error } = await supabase.from('messages').insert([outgoingMessage]).select('*')
+  if (error) console.error('❌ Erro ao gravar outgoing:', error)
+
+  return data?.[0] || null
 }
+
 
 
 /**
