@@ -149,6 +149,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 const savedOutgoing = await logOutgoingMessage(userId, block.type, content, flow.id)
 lastResponse = savedOutgoing
 
+          // ✅ Emite via WebSocket aqui mesmo
+  if (savedOutgoing && io) {
+    console.log('[flowExecutor] Emitindo new_message (outgoing):', savedOutgoing)
+    io.emit('new_message', savedOutgoing)
+    io.to(`chat-${userId}`).emit('new_message', savedOutgoing)
+  }
 
 
       } catch (mediaErr) {
