@@ -2,7 +2,7 @@
 
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
-// O runFlow continua apenas processando, sem emitir socket
+// runFlow permanece responsável por processar e gravar a resposta
 import { runFlow } from '../chatbot/flowExecutor.js'
 import axios from 'axios'
 
@@ -25,7 +25,7 @@ export default async function webhookRoutes(fastify, opts) {
   fastify.post('/', async (req, reply) => {
     const body = req.body
 
-    // Ignora apenas status updates sem mensagens
+    // Ignora eventos que só trazem status
     const hasStatusesOnly = !!body.entry?.[0]?.changes?.[0]?.value?.statuses
     const hasMessages     = !!body.entry?.[0]?.changes?.[0]?.value?.messages
 
@@ -46,7 +46,7 @@ export default async function webhookRoutes(fastify, opts) {
       const msgId   = msg.id
       const msgType = msg.type
 
-      // Normaliza payload do usuário (texto / botão / localização etc.)
+      // Normaliza payload do usuário para texto simples ou ID de interactive
       let userMessage = ''
       switch (msgType) {
         case 'text':
@@ -82,7 +82,7 @@ export default async function webhookRoutes(fastify, opts) {
 
       fastify.log.info(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
 
-      // Carrega o último fluxo ativo
+      // Carrega o último fluxo publicado
       const { data: latestFlow, error: flowFetchError } = await supabase
         .from('flows')
         .select('*')
@@ -94,7 +94,7 @@ export default async function webhookRoutes(fastify, opts) {
         fastify.log.error('[webhookRoutes] Erro ao buscar latestFlow:', flowFetchError)
       }
 
-      // Prepara variáveis de sessão
+      // Prepara variáveis de sessão (rawUserId = from, sem sufixo)
       const vars = {
         userPhone:        from,
         userName:         profileName,
@@ -106,7 +106,7 @@ export default async function webhookRoutes(fastify, opts) {
 
       const formattedUserId = `${from}@w.msgcli.net`
 
-      // ─── 1) Grava “incoming” no banco ───
+      // ─── 1) Grava mensagem “incoming” na tabela `messages` ───
       let mensagemInseridaIncoming = null
       try {
         const { data: insertedData, error: insertError } = await supabase
@@ -166,22 +166,19 @@ export default async function webhookRoutes(fastify, opts) {
         message:    userMessage.toLowerCase(),
         flow:       latestFlow,
         vars,
-        rawUserId:  from       // runFlow monta `${rawUserId}@w.msgcli.net`
+        rawUserId:  from        // runFlow monta `${rawUserId}@w.msgcli.net`
       })
       fastify.log.info('🤖 Resposta do bot:', botResponse)
 
-      // ─── 4) Emit: bot_response ───
+      // ─── 4) Emit: new_message (outgoing) ───
       if (fastify.io) {
-        fastify.io.emit('new_message', botResponse) // Se seu front só escuta `new_message`
+        fastify.io.emit('new_message', botResponse)
         fastify.io
           .to(`chat-${formattedUserId}`)
           .emit('new_message', botResponse)
-
-        // Caso queira um evento separado:
-        // fastify.io.emit('bot_response', { user_id: formattedUserId, response: botResponse })
-        // fastify.io.to(`chat-${formattedUserId}`).emit('bot_response', { user_id: formattedUserId, response: botResponse })
       }
-      // Observação: gravação do outgoing e envio via WhatsApp continuam dentro do runFlow
+
+      // Observação: a gravação do outgoing e o envio ao WhatsApp continuam dentro de runFlow
     }
 
     return reply.code(200).send('EVENT_RECEIVED')
