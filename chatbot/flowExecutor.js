@@ -146,8 +146,9 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
           content,
           flowId: flow.id
         });
-        const inserted = await logOutgoingMessage(userId, block.type, content, flow.id);
-lastResponse = inserted;
+const savedOutgoing = await logOutgoingMessage(userId, block.type, content, flow.id)
+lastResponse = savedOutgoing
+
 
 
       } catch (mediaErr) {
