@@ -1,34 +1,34 @@
 // src/routes/messageRoutes.js
 
-import dotenv from 'dotenv';
-import { supabase } from '../services/db.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
-import axios from 'axios';
-dotenv.config();
+import dotenv from 'dotenv'
+import { supabase } from '../services/db.js'
+import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js'
+import axios from 'axios'
+
+dotenv.config()
 
 export default async function messageRoutes(fastify, opts) {
   // ──────────────────────────────────────────────────────────────────────────
   // 1) ENVIA QUALQUER TIPO (TEXT, IMAGE, AUDIO, LOCATION, INTERACTIVE etc)
   // ──────────────────────────────────────────────────────────────────────────
   fastify.post('/send', async (req, reply) => {
-    const { to, type, content } = req.body;
+    const { to, type, content } = req.body
     // Garante o formato unificado de user_id
-    const userId = `${to}@w.msgcli.net`;
+    const userId = `${to}@w.msgcli.net`
 
     try {
       // Envia absolutamente TUDO via sendWhatsappMessage
-      // Basta que `type` esteja correto e `content` contenha a estrutura adequada.
-      const result = await sendWhatsappMessage({ to, type, content });
+      const result = await sendWhatsappMessage({ to, type, content })
 
       // Extrai message_id retornado (normalmente em result.messages[0].id)
-      const whatsappMsgId = result.messages?.[0]?.id || null;
+      const whatsappMsgId = result.messages?.[0]?.id || null
 
-      // Grava no banco como outgoing
-      await supabase.from('messages').insert([{
+      // Prepara objeto para inserir como outgoing
+      const outgoingMsg = {
         user_id:             userId,
         whatsapp_message_id: whatsappMsgId,
         direction:           'outgoing',
-        type,                                 // ex: 'text', 'image', 'interactive', ...
+        type,                                  // ex: 'text', 'image', 'interactive', ...
         content:             JSON.stringify(content),
         timestamp:           new Date().toISOString(),
         flow_id:             null,
@@ -38,13 +38,32 @@ export default async function messageRoutes(fastify, opts) {
         metadata:            null,
         created_at:          new Date().toISOString(),
         updated_at:          new Date().toISOString()
-      }]);
+      }
 
-      return reply.code(200).send(result);
+      // Grava no banco como outgoing
+      const { data: insertedData, error: insertError } = await supabase
+        .from('messages')
+        .insert([outgoingMsg])
+        .select()
 
+      if (insertError) {
+        fastify.log.error('[messageRoutes] Erro ao inserir outgoing:', insertError)
+        return reply.code(500).send({ error: 'Falha ao gravar mensagem no banco' })
+      }
+
+      const mensagemInserida = insertedData[0]
+
+      // Emite evento via Socket.IO para atualizar o front
+      if (fastify.io) {
+        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing) via Socket.IO:', mensagemInserida)
+        fastify.io.emit('new_message', mensagemInserida)
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida)
+      }
+
+      return reply.code(200).send(result)
     } catch (err) {
-      const errorData = err.response?.data || err.message;
-      fastify.log.error(errorData);
+      const errorData = err.response?.data || err.message
+      fastify.log.error('[messageRoutes] Erro ao enviar outgoing WhatsApp:', errorData)
 
       // Regra 24h (fora da janela)
       if (
@@ -52,20 +71,20 @@ export default async function messageRoutes(fastify, opts) {
         errorData?.error?.code === 131047
       ) {
         return reply.code(400).send({
-          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
-        });
+          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.'
+        })
       }
 
-      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
+      return reply.code(500).send({ error: 'Erro ao enviar mensagem' })
     }
-  });
+  })
 
   // ──────────────────────────────────────────────────────────────────────────
   // 2) ENVIA TEMPLATE (rota separada)
   // ──────────────────────────────────────────────────────────────────────────
   fastify.post('/send/template', async (req, reply) => {
-    const { to, templateName, languageCode, components } = req.body;
-    const userId = `${to}@w.msgcli.net`;
+    const { to, templateName, languageCode, components } = req.body
+    const userId = `${to}@w.msgcli.net`
 
     const payload = {
       messaging_product: 'whatsapp',
@@ -76,7 +95,7 @@ export default async function messageRoutes(fastify, opts) {
         language:   { code: languageCode },
         components: components || []
       }
-    };
+    }
 
     try {
       const res = await axios.post(
@@ -88,11 +107,11 @@ export default async function messageRoutes(fastify, opts) {
             'Content-Type': 'application/json'
           }
         }
-      );
+      )
 
-      const whatsappMsgId = res.data.messages?.[0]?.id || null;
+      const whatsappMsgId = res.data.messages?.[0]?.id || null
 
-      await supabase.from('messages').insert([{
+      const outgoingMsg = {
         user_id:             userId,
         whatsapp_message_id: whatsappMsgId,
         direction:           'outgoing',
@@ -106,14 +125,33 @@ export default async function messageRoutes(fastify, opts) {
         metadata:            JSON.stringify({ languageCode, components }),
         created_at:          new Date().toISOString(),
         updated_at:          new Date().toISOString()
-      }]);
+      }
 
-      return reply.code(200).send(res.data);
+      const { data: insertedData, error: insertError } = await supabase
+        .from('messages')
+        .insert([outgoingMsg])
+        .select()
+
+      if (insertError) {
+        fastify.log.error('[messageRoutes] Erro ao inserir outgoing template:', insertError)
+        return reply.code(500).send({ error: 'Falha ao gravar template no banco' })
+      }
+
+      const mensagemInserida = insertedData[0]
+
+      // Emite evento via Socket.IO para atualizar o front
+      if (fastify.io) {
+        fastify.log.info('[messageRoutes] Emitindo new_message (template) via Socket.IO:', mensagemInserida)
+        fastify.io.emit('new_message', mensagemInserida)
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida)
+      }
+
+      return reply.code(200).send(res.data)
     } catch (err) {
-      fastify.log.error(err.response?.data || err.message);
-      return reply.code(500).send({ error: 'Erro ao enviar template' });
+      fastify.log.error('[messageRoutes] Erro ao enviar template:', err.response?.data || err.message)
+      return reply.code(500).send({ error: 'Erro ao enviar template' })
     }
-  });
+  })
 
   // ──────────────────────────────────────────────────────────────────────────
   // 3) LISTA TEMPLATES
@@ -128,11 +166,11 @@ export default async function messageRoutes(fastify, opts) {
             'Content-Type': 'application/json'
           }
         }
-      );
-      return reply.code(200).send(res.data);
+      )
+      return reply.code(200).send(res.data)
     } catch (err) {
-      fastify.log.error(err.response?.data || err.message);
-      return reply.code(500).send({ error: 'Erro ao listar templates' });
+      fastify.log.error('[messageRoutes] Erro ao listar templates:', err.response?.data || err.message)
+      return reply.code(500).send({ error: 'Erro ao listar templates' })
     }
-  });
+  })
 }
