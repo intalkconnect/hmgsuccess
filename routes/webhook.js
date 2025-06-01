@@ -6,9 +6,8 @@ import { runFlow } from '../chatbot/flowExecutor.js'
 dotenv.config()
 
 export default async function webhookRoutes(fastify) {
-  const io = fastify.io // ✅ Correção: acessa o Socket.IO via fastify
+  const io = fastify.io
 
-  // ─── 1) Verificação do Webhook ────────────────────────────────
   fastify.get('/', async (req, reply) => {
     const mode = req.query['hub.mode']
     const token = req.query['hub.verify_token']
@@ -20,7 +19,6 @@ export default async function webhookRoutes(fastify) {
     return reply.code(403).send('Forbidden')
   })
 
-  // ─── 2) Processamento das mensagens recebidas ─────────────────
   fastify.post('/', async (req, reply) => {
     const body = req.body
 
@@ -46,31 +44,18 @@ export default async function webhookRoutes(fastify) {
 
       let userMessage = ''
       switch (msgType) {
-        case 'text':
-          userMessage = msg.text?.body || ''
-          break
+        case 'text': userMessage = msg.text?.body || ''; break
         case 'interactive':
-          userMessage = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || ''
-          break
-        case 'image':
-          userMessage = '[imagem recebida]'
-          break
-        case 'video':
-          userMessage = '[vídeo recebido]'
-          break
-        case 'audio':
-          userMessage = '[áudio recebido]'
-          break
-        case 'document':
-          userMessage = '[documento recebido]'
-          break
-        case 'location': {
+          userMessage = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || ''; break
+        case 'image': userMessage = '[imagem recebida]'; break
+        case 'video': userMessage = '[vídeo recebido]'; break
+        case 'audio': userMessage = '[áudio recebido]'; break
+        case 'document': userMessage = '[documento recebido]'; break
+        case 'location':
           const { latitude, longitude } = msg.location || {}
           userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
           break
-        }
-        default:
-          userMessage = `[tipo não tratado: ${msgType}]`
+        default: userMessage = `[tipo não tratado: ${msgType}]`
       }
 
       console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
@@ -82,6 +67,8 @@ export default async function webhookRoutes(fastify) {
         .limit(1)
         .single()
 
+      const formattedUserId = `${from}@w.msgcli.net`
+
       const vars = {
         userPhone: from,
         userName: profileName,
@@ -90,8 +77,6 @@ export default async function webhookRoutes(fastify) {
         now: new Date().toISOString(),
         lastMessageId: msgId
       }
-
-      const formattedUserId = `${from}@w.msgcli.net`
 
       const { data: insertedMessages, error } = await supabase.from('messages').insert([{
         user_id: formattedUserId,
@@ -113,19 +98,17 @@ export default async function webhookRoutes(fastify) {
         console.error('❌ Erro ao gravar mensagem:', error)
       }
 
-      // 🚀 Emissão via WebSocket após gravação
-      if (io && insertedMessages?.length > 0) {
+      // 🚀 Emite mensagem recebida
+      if (io && insertedMessages?.[0]) {
         const emitPayload = insertedMessages[0]
         setTimeout(() => {
-          console.log('📡 Emitindo new_message:', emitPayload)
+          console.log('📡 Emitindo new_message (incoming):', emitPayload)
           io.emit('new_message', emitPayload)
           io.to(`chat-${formattedUserId}`).emit('new_message', emitPayload)
         }, 200)
-      } else {
-        console.warn('⚠️ io ou mensagens não disponíveis para emitir.')
       }
 
-      // ⏳ Status de processamento do bot
+      // ⏳ Status do bot
       if (io) {
         const statusPayload = {
           user_id: formattedUserId,
@@ -136,25 +119,22 @@ export default async function webhookRoutes(fastify) {
         io.to(`chat-${formattedUserId}`).emit('bot_processing', statusPayload)
       }
 
-      // 🤖 Executa lógica do bot
-      const botResponse = await runFlow({
+      // 🤖 Executa o fluxo do bot
+      const outgoingMessage = await runFlow({
         message: userMessage.toLowerCase(),
         flow: latestFlow?.data,
         vars,
         rawUserId: from
       })
 
-      console.log('🤖 Resposta do bot:', botResponse)
-
-      // 🚀 Emissão da resposta do bot
-// 🚀 Emissão como "new_message" se for uma resposta gravada (outgoing)
-if (io && botResponse?.id && botResponse?.direction === 'outgoing') {
-  console.log('📡 Emitindo new_message (outgoing):', botResponse)
-  io.emit('new_message', botResponse)
-  io.to(`chat-${formattedUserId}`).emit('new_message', botResponse)
-} else {
-  console.warn('⚠️ botResponse não tem estrutura esperada para emissão.')
-}
+      // 🚀 Emite resposta do bot (como "new_message")
+      if (io && outgoingMessage?.id && outgoingMessage?.direction === 'outgoing') {
+        console.log('📡 Emitindo new_message (outgoing):', outgoingMessage)
+        io.emit('new_message', outgoingMessage)
+        io.to(`chat-${formattedUserId}`).emit('new_message', outgoingMessage)
+      } else {
+        console.warn('⚠️ botResponse não foi emitido:', outgoingMessage)
+      }
     }
 
     return reply.code(200).send('EVENT_RECEIVED')
