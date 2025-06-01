@@ -8,8 +8,8 @@ export async function initDB() {
 
   // Usa a service_role_key para ter permissão de leitura/gravação total
   supabase = createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
   )
 
   // (Opcional) você pode testar a conexão aqui:
