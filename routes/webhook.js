@@ -7,21 +7,18 @@ import axios from 'axios';
 dotenv.config();
 
 export default async function webhookRoutes(fastify, opts) {
-  const io = opts.io; // <- WebSocket passado via app.js
+  const io = opts.io;
 
-  // Verificação do Webhook
   fastify.get('/', async (req, reply) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
     if (mode && token === process.env.VERIFY_TOKEN) {
       return reply.code(200).send(challenge);
     }
     return reply.code(403).send('Forbidden');
   });
 
-  // Processamento das mensagens recebidas
   fastify.post('/', async (req, reply) => {
     const body = req.body;
 
@@ -47,33 +44,18 @@ export default async function webhookRoutes(fastify, opts) {
 
       let userMessage = '';
       switch (msgType) {
-        case 'text':
-          userMessage = msg.text?.body || '';
-          break;
+        case 'text':        userMessage = msg.text?.body || ''; break;
         case 'interactive':
-          if (msg.interactive.type === 'button_reply') {
-            userMessage = msg.interactive.button_reply.id;
-          } else if (msg.interactive.type === 'list_reply') {
-            userMessage = msg.interactive.list_reply.id;
-          }
+          userMessage = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || '';
           break;
-        case 'image':
-          userMessage = '[imagem recebida]';
-          break;
-        case 'video':
-          userMessage = '[vídeo recebido]';
-          break;
-        case 'audio':
-          userMessage = '[áudio recebido]';
-          break;
-        case 'document':
-          userMessage = '[documento recebido]';
-          break;
-        case 'location': {
+        case 'image':       userMessage = '[imagem recebida]'; break;
+        case 'video':       userMessage = '[vídeo recebido]'; break;
+        case 'audio':       userMessage = '[áudio recebido]'; break;
+        case 'document':    userMessage = '[documento recebido]'; break;
+        case 'location':
           const { latitude, longitude } = msg.location || {};
           userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`;
           break;
-        }
         default:
           userMessage = `[tipo não tratado: ${msgType}]`;
       }
@@ -98,7 +80,6 @@ export default async function webhookRoutes(fastify, opts) {
 
       const formattedUserId = `${from}@w.msgcli.net`;
 
-      // Grava a mensagem no banco
       const { data: insertedMessages } = await supabase.from('messages').insert([{
         user_id:             formattedUserId,
         whatsapp_message_id: msgId,
@@ -115,22 +96,22 @@ export default async function webhookRoutes(fastify, opts) {
         updated_at:          new Date().toISOString()
       }]).select('*');
 
-      // 🚀 Emit após gravação da incoming
-      if (io && insertedMessages && insertedMessages.length > 0) {
+      // LOG E EMIT new_message
+      if (io && insertedMessages?.length > 0) {
+        console.log('📡 Emitindo new_message:', insertedMessages[0]);
         io.emit('new_message', insertedMessages[0]);
         io.to(`chat-${formattedUserId}`).emit('new_message', insertedMessages[0]);
       }
 
-      // 🧠 Envia status de processamento opcional
+      // LOG E EMIT bot_processing
       if (io) {
-        io.emit('bot_processing', {
+        const statusPayload = {
           user_id: formattedUserId,
           status: 'processing'
-        });
-        io.to(`chat-${formattedUserId}`).emit('bot_processing', {
-          user_id: formattedUserId,
-          status: 'processing'
-        });
+        };
+        console.log('⏳ Emitindo bot_processing:', statusPayload);
+        io.emit('bot_processing', statusPayload);
+        io.to(`chat-${formattedUserId}`).emit('bot_processing', statusPayload);
       }
 
       const botResponse = await runFlow({
@@ -142,16 +123,15 @@ export default async function webhookRoutes(fastify, opts) {
 
       console.log('🤖 Resposta do bot:', botResponse);
 
-      // 🚀 Emit resposta do bot
+      // LOG E EMIT bot_response
       if (io) {
-        io.emit('bot_response', {
+        const responsePayload = {
           user_id: formattedUserId,
           response: botResponse
-        });
-        io.to(`chat-${formattedUserId}`).emit('bot_response', {
-          user_id: formattedUserId,
-          response: botResponse
-        });
+        };
+        console.log('📡 Emitindo bot_response:', responsePayload);
+        io.emit('bot_response', responsePayload);
+        io.to(`chat-${formattedUserId}`).emit('bot_response', responsePayload);
       }
     }
 
