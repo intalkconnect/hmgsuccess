@@ -146,7 +146,9 @@ export async function runFlow({ message, flow, vars, rawUserId }) {
           content,
           flowId: flow.id
         });
-        await logOutgoingMessage(userId, block.type, content, flow.id);
+        const inserted = await logOutgoingMessage(userId, block.type, content, flow.id);
+lastResponse = inserted;
+
 
       } catch (mediaErr) {
         console.error('❌ Falha ao enviar mídia:', mediaErr);
