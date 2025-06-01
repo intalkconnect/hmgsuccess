@@ -91,7 +91,8 @@ export default async function webhookRoutes(fastify) {
         status: 'received',
         metadata: null,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        channel: 'whatsapp'
       }]).select('*')
 
       if (error) {
