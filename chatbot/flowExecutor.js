@@ -174,7 +174,6 @@ lastResponse = savedOutgoing
         await logOutgoingFallback(userId, fallback, flow.id);
       }
 
-      lastResponse = content;
     }
 
     // 4.5) Determina o bloco seguinte (lembra de {previousBlock} e onerror)
