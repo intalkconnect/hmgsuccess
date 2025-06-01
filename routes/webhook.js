@@ -89,6 +89,7 @@ if (!existingClient) {
       phone: from,
       name: profileName,
       channel: 'whatsapp',
+      user_id: formattedUserId,
       create_at: new Date().toISOString()
     }])
 
