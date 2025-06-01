@@ -24,6 +24,7 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     console.error('❌ Erro ao gravar outgoing:', error)
     return null
   }
+console.log('✅ Mensagem outgoing gravada:', data?.[0])
 
   return data?.[0] || null // 🔁 Retorna registro inteiro (com id e direction)
 }
