@@ -10,24 +10,39 @@ import { randomUUID } from 'crypto';
  * @param {string|object} content - Conteúdo (texto ou JSON para mídia)
  * @param {string|null} flowId - ID do fluxo que disparou esta mensagem
  */
+import { randomUUID } from 'crypto'
+import { supabase } from '../services/db.js'
+
 export async function logOutgoingMessage(userId, type, content, flowId) {
-  await supabase.from('messages').insert([{
-    id:                    randomUUID(),           // gera um UUID para whatsapp_message_id
-    user_id:               userId,
-    whatsapp_message_id:   randomUUID(),           // agora NÃO é null
-    direction:             'outgoing',
-    type:                  type,
-    content:               content,
-    timestamp:             new Date().toISOString(),
-    flow_id:               flowId || null,
-    agent_id:              null,
-    queue_id:              null,
-    status:                'sent',
-    metadata:              null,
-    created_at:            new Date().toISOString(),
-    updated_at:            new Date().toISOString()
-  }]);
+  const { data, error } = await supabase
+    .from('messages')
+    .insert([{
+      id:                  randomUUID(),
+      user_id:             userId,
+      whatsapp_message_id: randomUUID(),
+      direction:           'outgoing',
+      type,
+      content,
+      timestamp:           new Date().toISOString(),
+      flow_id:             flowId || null,
+      agent_id:            null,
+      queue_id:            null,
+      status:              'sent',
+      metadata:            null,
+      created_at:          new Date().toISOString(),
+      updated_at:          new Date().toISOString()
+    }])
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('[logOutgoingMessage] erro ao inserir mensagem:', error);
+    return null;
+  }
+
+  return data;
 }
+
 
 /**
  * Grava um “fallback” quando falha no envio de mídia.
