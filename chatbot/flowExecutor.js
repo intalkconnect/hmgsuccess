@@ -8,7 +8,7 @@ import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel, markAsReadIfNeeded } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 
-export async function runFlow({ message, flow, vars, rawUserId }) {
+export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = `${rawUserId}@w.msgcli.net`;
 
   // Se não houver fluxo válido, retorna mensagem de erro
@@ -215,4 +215,9 @@ lastResponse = savedOutgoing
   }
 
   return lastResponse;
+    
+    if (savedOutgoing && io) {
+    io.emit('new_message', savedOutgoing)
+    io.to(`chat-${userId}`).emit('new_message', savedOutgoing)
+  }
 }
