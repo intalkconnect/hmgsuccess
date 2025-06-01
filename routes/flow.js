@@ -73,13 +73,38 @@ fastify.post('/activate', async (req, reply) => {
   return reply.code(200).send({ success: true });
 });
 
-  fastify.get('/latest', async (req, reply) => {
-  const { data: rows } = await supabase
+fastify.get('/latest', async (req, reply) => {
+  // Retorna apenas id, status (active) e created_at dos 10 últimos registros
+  const { data: rows, error } = await supabase
     .from('flows')
-    .select('id, data, created_at, active')
+    // seleciona só as colunas id, status e created_at
+    .select('id, status, created_at')
     .order('created_at', { ascending: false })
     .limit(10);
+
+  if (error) {
+    return reply.code(500).send({ error: 'Falha ao buscar últimos fluxos', detail: error });
+  }
+
   return reply.code(200).send(rows);
 });
+
+  // GET /flows/data/:id  → retorna apenas o campo "data" do fluxo
+fastify.get('/data/:id', async (req, reply) => {
+  const { id } = req.params;
+
+  const { data: row, error } = await supabase
+    .from('flows')
+    .select('data')
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    return reply.code(404).send({ error: 'Fluxo não encontrado', detail: error });
+  }
+
+  return reply.code(200).send(row.data);
+});
+
 
 }
