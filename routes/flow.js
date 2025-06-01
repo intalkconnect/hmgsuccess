@@ -62,4 +62,24 @@ export default async function flowRoutes(fastify, opts) {
       reply.send({ message: 'Sessão salva com sucesso.' });
     }
   });
+
+  // Exemplo em pseudo‐código (Fastify + Supabase)
+fastify.post('/flows/activate', async (req, reply) => {
+  const { id } = req.body;
+  await supabase
+    .from('flows')
+    .update({ status: true })
+    .eq('id', id);
+  return reply.code(200).send({ success: true });
+});
+
+  fastify.get('/flows/latest', async (req, reply) => {
+  const { data: rows } = await supabase
+    .from('flows')
+    .select('id, data, created_at, status')
+    .order('created_at', { ascending: false })
+    .limit(10);
+  return reply.code(200).send(rows);
+});
+
 }
