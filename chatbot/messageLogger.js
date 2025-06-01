@@ -10,9 +10,6 @@ import { randomUUID } from 'crypto';
  * @param {string|object} content - Conteúdo (texto ou JSON para mídia)
  * @param {string|null} flowId - ID do fluxo que disparou esta mensagem
  */
-import { randomUUID } from 'crypto'
-import { supabase } from '../services/db.js'
-
 export async function logOutgoingMessage(userId, type, content, flowId) {
   const { data, error } = await supabase
     .from('messages')
