@@ -45,10 +45,12 @@ async function start() {
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`)
 
-    socket.on('join_room', (userId) => {
-      socket.join(`chat-${userId}`)
-      fastify.log.info(`[Socket.IO] Socket ${socket.id} entrou na sala chat-${userId}`)
-    })
+socket.on('join_room', (userId) => {
+  const normalizedId = userId.includes('@') ? userId : `${userId}@w.msgcli.net`
+  socket.join(`chat-${normalizedId}`)
+  fastify.log.info(`[Socket.IO] Socket ${socket.id} entrou na sala chat-${normalizedId}`)
+})
+
 
     socket.on('leave_room', (userId) => {
       socket.leave(`chat-${userId}`)
