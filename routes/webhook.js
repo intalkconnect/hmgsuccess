@@ -37,6 +37,32 @@ export default async function webhookRoutes(fastify) {
     const from = contact?.wa_id
     const profileName = contact?.profile?.name || 'usuário'
 
+    // 👤 Verifica se o cliente já está cadastrado
+const { data: existingClient } = await supabase
+  .from('clientes')
+  .select('id')
+  .eq('phone', from)
+  .limit(1)
+  .maybeSingle()
+
+if (!existingClient) {
+  const { error: insertError } = await supabase
+    .from('clientes')
+    .insert([{
+      phone: from,
+      name: profileName,
+      channel: 'whatsapp',
+      create_at: new Date().toISOString()
+    }])
+
+  if (insertError) {
+    console.error('❌ Erro ao salvar cliente:', insertError)
+  } else {
+    console.log('✅ Cliente salvo:', from)
+  }
+}
+
+
     if (messages && messages.length > 0 && from) {
       const msg = messages[0]
       const msgId = msg.id
