@@ -128,7 +128,7 @@ export default async function webhookRoutes(fastify) {
       })
 
       // 🚀 Emite resposta do bot (como "new_message")
-      if (io && outgoingMessage?.user_id) { {
+      if (io && outgoingMessage?.user_id) { 
         console.log('📡 Emitindo new_message (outgoing):', outgoingMessage)
         io.emit('new_message', outgoingMessage)
         io.to(`chat-${formattedUserId}`).emit('new_message', outgoingMessage)
