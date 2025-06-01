@@ -143,7 +143,6 @@ export default async function webhookRoutes(fastify, opts) {
         flow:       latestFlow,
         vars,
         rawUserId:  from,        // runFlow monta `${rawUserId}@w.msgcli.net`
-        io:         fastify.io   // aqui passamos o Socket.IO para o runFlow
       })
       console.log('🤖 Resposta do bot:', botResponse)
 
