@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from 'fastify/cors';
 import dotenv from 'dotenv';
 import webhookRoutes from './routes/webhook.js';
 import messageRoutes from './routes/messages.js';
@@ -8,6 +9,11 @@ import { initDB } from './services/db.js';
 dotenv.config();
 
 const fastify = Fastify({ logger: true });
+
+// Habilita CORS
+await fastify.register(cors, {
+  origin: '*', // ou defina um domínio específico em produção
+});
 
 // Inicializa conexão com Supabase
 await initDB();
