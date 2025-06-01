@@ -78,7 +78,7 @@ fastify.get('/latest', async (req, reply) => {
   const { data: rows, error } = await supabase
     .from('flows')
     // seleciona só as colunas id, status e created_at
-    .select('id, status, created_at')
+    .select('id, active, created_at')
     .order('created_at', { ascending: false })
     .limit(10);
 
