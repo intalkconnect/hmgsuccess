@@ -7,7 +7,7 @@ export async function initDB() {
   if (supabase) return
 
   const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const key = process.env.SUPABASE_KEY
 
   if (!url || !key) {
     throw new Error('As variáveis SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY devem estar definidas')
