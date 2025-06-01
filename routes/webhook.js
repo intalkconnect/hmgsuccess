@@ -96,22 +96,24 @@ export default async function webhookRoutes(fastify, opts) {
         updated_at:          new Date().toISOString()
       }]).select('*');
 
-      // LOG E EMIT new_message
+      // ⏳ Delay para garantir que o front já entrou na sala
       if (io && insertedMessages?.length > 0) {
-        console.log('📡 Emitindo new_message:', insertedMessages[0]);
-        io.emit('new_message', insertedMessages[0]);
-        io.to(`chat-${formattedUserId}`).emit('new_message', insertedMessages[0]);
+        const emitPayload = insertedMessages[0]
+        setTimeout(() => {
+          console.log('📡 Emitindo new_message (com atraso):', emitPayload)
+          io.emit('new_message', emitPayload)
+          io.to(`chat-${formattedUserId}`).emit('new_message', emitPayload)
+        }, 200) // <-- delay de 200ms
       }
 
-      // LOG E EMIT bot_processing
       if (io) {
         const statusPayload = {
           user_id: formattedUserId,
           status: 'processing'
-        };
-        console.log('⏳ Emitindo bot_processing:', statusPayload);
-        io.emit('bot_processing', statusPayload);
-        io.to(`chat-${formattedUserId}`).emit('bot_processing', statusPayload);
+        }
+        console.log('⏳ Emitindo bot_processing:', statusPayload)
+        io.emit('bot_processing', statusPayload)
+        io.to(`chat-${formattedUserId}`).emit('bot_processing', statusPayload)
       }
 
       const botResponse = await runFlow({
@@ -123,7 +125,6 @@ export default async function webhookRoutes(fastify, opts) {
 
       console.log('🤖 Resposta do bot:', botResponse);
 
-      // LOG E EMIT bot_response
       if (io) {
         const responsePayload = {
           user_id: formattedUserId,
