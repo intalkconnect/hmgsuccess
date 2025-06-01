@@ -1,19 +1,9 @@
-// engine/messageLogger.js
-import { supabase } from '../services/db.js';
-import { randomUUID } from 'crypto';
-
-/**
- * Grava uma mensagem de saída (bot → usuário) na tabela `messages`.
- *
- * @param {string} userId    - ID do usuário (e.g. "5521990286724@w.msgcli.net")
- * @param {string} type      - Tipo de mensagem ("text", "image", etc.)
- * @param {string|object} content - Conteúdo (texto ou JSON para mídia)
- * @param {string|null} flowId - ID do fluxo que disparou esta mensagem
- */
-// messageLogger.js
+// chatbot/messageLogger.js
+import { supabase } from '../services/db.js'
+import { randomUUID } from 'crypto'
 
 export async function logOutgoingMessage(userId, type, content, flowId) {
-  const outgoingMessage = {
+  const { data, error } = await supabase.from('messages').insert([{
     id:                  randomUUID(),
     user_id:             userId,
     whatsapp_message_id: randomUUID(),
@@ -28,15 +18,15 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     metadata:            null,
     created_at:          new Date().toISOString(),
     updated_at:          new Date().toISOString()
-  }
+  }]).select('*')
 
-  const { data, error } = await supabase.from('messages').insert([outgoingMessage]).select('*')
-  if (error) console.error('❌ Erro ao gravar outgoing:', error)
+  if (error) {
+    console.error('❌ Erro ao salvar outgoing:', error)
+    return null
+  }
 
   return data?.[0] || null
 }
-
-
 
 /**
  * Grava um “fallback” quando falha no envio de mídia.
