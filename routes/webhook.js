@@ -96,6 +96,10 @@ export default async function webhookRoutes(fastify, opts) {
         updated_at:          new Date().toISOString()
       }]).select('*');
 
+
+      console.log('🔍 io:', typeof io, io ? '✅ existe' : '❌ undefined');
+console.log('🔍 insertedMessages:', insertedMessages);
+
       // ⏳ Delay para garantir que o front já entrou na sala
       if (io && insertedMessages?.length > 0) {
         const emitPayload = insertedMessages[0]
