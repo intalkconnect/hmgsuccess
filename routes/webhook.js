@@ -2,6 +2,7 @@
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
+import markAsReadAndTyping from '../services/sendWhatsappMessage.js'
 
 dotenv.config()
 
@@ -44,6 +45,14 @@ export default async function webhookRoutes(fastify) {
       const msg = messages[0]
       const msgId = msg.id
       const msgType = msg.type
+
+        if (messageId) {
+    try {
+      await markAsReadAndTyping(msgId);
+    } catch (err) {
+      console.warn('[⚠️ Falha ao marcar como lida]', err.message);
+    }
+  }
 
       let userMessage = ''
       switch (msgType) {
