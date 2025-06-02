@@ -2,7 +2,7 @@
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
-import { markAsReadAndTyping } from '../services/sendWhatsappMessage.js'
+import { markMessageAsRead } from '../services/wa/markMessageAsRead.js';
 
 dotenv.config()
 
@@ -48,7 +48,7 @@ export default async function webhookRoutes(fastify) {
 
         if (msgId) {
     try {
-      await markAsReadAndTyping(msgId);
+      await markMessageAsRead(msgId);
     } catch (err) {
       console.warn('[⚠️ Falha ao marcar como lida]', err.message);
     }
