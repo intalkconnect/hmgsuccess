@@ -65,6 +65,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   } else {
     // Sem sessão existente: inicia no bloco “start”
     currentBlockId = flow.start;
+    sessionVars.lastUserMessage = message;
   }
 
   let lastResponse = null;
