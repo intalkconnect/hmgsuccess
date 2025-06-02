@@ -7,7 +7,7 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 const minioClient = new Client({
-  endPoint: process.env.MINIO_ENDPOINT.replace(/^https?:\/\//, ''),
+  endPoint: process.env.MINIO_ENDPOINT,
   port: 443,
   useSSL: true,
   accessKey: process.env.MINIO_ACCESS_KEY,
