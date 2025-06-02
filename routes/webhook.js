@@ -2,7 +2,7 @@
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
-import markAsReadAndTyping from '../services/sendWhatsappMessage.js'
+import { markAsReadAndTyping } from '../services/sendWhatsappMessage.js'
 
 dotenv.config()
 
