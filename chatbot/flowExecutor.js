@@ -5,7 +5,7 @@ import axios from 'axios';
 import vm from 'vm';
 import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
-import { sendMessageByChannel } from './messenger.js';
+import { sendMessageByChannel, markAsReadIfNeeded } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
