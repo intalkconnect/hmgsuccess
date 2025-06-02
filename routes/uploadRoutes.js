@@ -1,17 +1,26 @@
-// routes/uploadRoutes.js
-import { uploadToMinio } from '../services/uploadToMinio.js'
+export async function uploadToMinio(buffer, originalname, mimetype) {
+  const ext = path.extname(originalname)
+  const uniqueName = `${uuidv4()}${ext}`
+  const bucket = process.env.MINIO_BUCKET
 
-export default async function uploadRoutes(fastify) {
-  fastify.post('/upload', async (req, reply) => {
-    const file = await req.file()
-
-    if (!file) {
-      return reply.code(400).send({ error: 'Nenhum arquivo enviado.' })
-    }
-
-    const buffer = await file.toBuffer()
-    const fileUrl = await uploadToMinio(buffer, file.filename, file.mimetype)
-
-    return { url: fileUrl }
+  console.log('[🟡 uploadToMinio] Iniciando upload', {
+    bucket,
+    originalname,
+    uniqueName,
+    mimetype
   })
+
+  try {
+    await minioClient.putObject(bucket, uniqueName, buffer, {
+      'Content-Type': mimetype
+    })
+
+    const publicUrl = `https://${process.env.MINIO_ENDPOINT}/${bucket}/${uniqueName}`
+    console.log('[✅ Upload concluído]', publicUrl)
+
+    return publicUrl
+  } catch (err) {
+    console.error('❌ Erro ao enviar para o MinIO:', err)
+    throw new Error('Falha ao fazer upload do arquivo')
+  }
 }
