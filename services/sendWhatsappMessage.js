@@ -12,7 +12,7 @@ const {
 
 export async function sendWhatsappMessage({ to, type, content, messageId }) {
 
-  sendTypingIndicator(to);
+  // sendTypingIndicator(to);
 
   // Monta o payload normal
   const payload = {
