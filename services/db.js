@@ -1,29 +1,36 @@
-// services/db.js
-import { createClient } from '@supabase/supabase-js'
-import dotenv from 'dotenv'
+import { supabase } from './db.js'
 
-dotenv.config()
+export async function salvarMensagem({ messageId, from, type, content }) {
+  try {
+    // Verifica se já existe a mensagem
+    const { data: existente, error: erroBusca } = await supabase
+      .from('messages')
+      .select('id')
+      .eq('whatsapp_message_id', messageId)
+      .single()
 
-// Vamos exportar uma variável “supabase” que será atribuída dentro de initDB()
-export let supabase
+    if (existente) {
+      console.log('[ℹ️ Mensagem já existe no banco]');
+      return;
+    }
 
-export const initDB = async () => {
-  // 1) Validar que as variáveis de ambiente existem
-  const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_KEY  // atenção: confira se no seu .env você definiu exatamente SUPABASE_KEY!
-  if (!url || !key) {
-    throw new Error(
-      'As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar definidas no seu .env'
-    )
-  }
+    // Se não existe, insere
+    const { error: erroInsert } = await supabase.from('messages').insert([
+      {
+        whatsapp_message_id: messageId,
+        from,
+        type,
+        content,
+        created_at: new Date().toISOString(),
+      }
+    ])
 
-  // 2) Criar o client Supabase (mesmo comportamento que você tinha antes)
-  supabase = createClient(url, key)
-
-  // 3) (Opcional) testar a conexão imediatamente, para levantar erro cedo
-  const { error } = await supabase.from('messages').select('id').limit(1)
-  if (error) {
-    console.error('Erro ao conectar no Supabase dentro de initDB():', error)
-    throw error
+    if (erroInsert) {
+      console.error('❌ Erro ao inserir no Supabase:', erroInsert)
+    } else {
+      console.log('[✅ Mensagem salva no banco]')
+    }
+  } catch (err) {
+    console.error('❌ Erro inesperado ao salvar mensagem:', err.message || err)
   }
 }
