@@ -34,7 +34,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     // Se o bloco anterior foi “despedida”, reinicia o fluxo
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
-      sessionVars = {}; 
+      sessionVars = {};
       sessionVars.lastUserMessage = message;
     } else {
       const awaiting = flow.blocks[storedBlock];
@@ -124,7 +124,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       // Marca como lido, se houver
       await markAsReadIfNeeded(message);
 
-      // Delay customizado
+      // Delay customizado (antes do send)
       if (block.sendDelayInSeconds) {
         await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
       }
@@ -141,21 +141,20 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
         // 4.4.2) Registra no banco como “outgoing”
         console.log('[flowExecutor] Gravando outgoing:', {
-          userId, 
-          type: block.type, 
+          userId,
+          type: block.type,
           content,
           flowId: flow.id
         });
-const savedOutgoing = await logOutgoingMessage(userId, block.type, content, flow.id)
-lastResponse = savedOutgoing
+        const savedOutgoing = await logOutgoingMessage(userId, block.type, content, flow.id);
+        lastResponse = savedOutgoing;
 
-          // ✅ Emite via WebSocket aqui mesmo
-  if (savedOutgoing && io) {
-    console.log('[flowExecutor] Emitindo new_message (outgoing):', savedOutgoing)
-    io.emit('new_message', savedOutgoing)
-    io.to(`chat-${userId}`).emit('new_message', savedOutgoing)
-  }
-
+        // ✅ Emite via WebSocket
+        if (savedOutgoing && io) {
+          console.log('[flowExecutor] Emitindo new_message (outgoing):', savedOutgoing);
+          io.emit('new_message', savedOutgoing);
+          io.to(`chat-${userId}`).emit('new_message', savedOutgoing);
+        }
 
       } catch (mediaErr) {
         console.error('❌ Falha ao enviar mídia:', mediaErr);
@@ -179,7 +178,6 @@ lastResponse = savedOutgoing
         });
         await logOutgoingFallback(userId, fallback, flow.id);
       }
-
     }
 
     // 4.5) Determina o bloco seguinte (lembra de {previousBlock} e onerror)
@@ -211,9 +209,14 @@ lastResponse = savedOutgoing
     if (block.awaitResponse) break;
 
     // 4.9) Delay de saída, se configurado pelo bloco
-    const delay = parseInt(block.awaitTimeInSeconds || '0', 10);
-    if (delay > 0) {
-      await new Promise(r => setTimeout(r, delay * 1000));
+    // Verificar explicitamente se awaitTimeInSeconds é um número > 0
+    if (
+      block.awaitTimeInSeconds != null &&             // existe e não é undefined nem null
+      block.awaitTimeInSeconds !== false &&            // não é false
+      !isNaN(Number(block.awaitTimeInSeconds)) &&      // pode ser convertido em número
+      Number(block.awaitTimeInSeconds) > 0             // e é maior que zero
+    ) {
+      await new Promise(r => setTimeout(r, Number(block.awaitTimeInSeconds) * 1000));
     }
 
     // 4.10) Avança para o próximo bloco
@@ -221,9 +224,4 @@ lastResponse = savedOutgoing
   }
 
   return lastResponse;
-    
-    if (savedOutgoing && io) {
-    io.emit('new_message', savedOutgoing)
-    io.to(`chat-${userId}`).emit('new_message', savedOutgoing)
-  }
 }
