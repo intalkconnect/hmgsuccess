@@ -46,7 +46,7 @@ export default async function webhookRoutes(fastify) {
       const msgId = msg.id
       const msgType = msg.type
 
-        if (messageId) {
+        if (msgId) {
     try {
       await markAsReadAndTyping(msgId);
     } catch (err) {
