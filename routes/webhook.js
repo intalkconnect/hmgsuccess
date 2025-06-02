@@ -43,13 +43,7 @@ export default async function webhookRoutes(fastify) {
       const msgId = msg.id
       const msgType = msg.type
 
-        if (msgId) {
-    try {
       markMessageAsRead(msgId);
-    } catch (err) {
-      console.warn('[⚠️ Falha ao marcar como lida]', err.message);
-    }
-  }
 
       let userMessage = ''
       switch (msgType) {
