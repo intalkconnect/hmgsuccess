@@ -2,6 +2,8 @@
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
+import { markMessageAsRead } from '../services/wa/markMessageAsRead.js'
+
 
 dotenv.config()
 
@@ -36,9 +38,6 @@ export default async function webhookRoutes(fastify) {
     const contact = entry.contacts?.[0]
     const from = contact?.wa_id
     const profileName = contact?.profile?.name || 'usuário'
-
-
-
 
     if (messages && messages.length > 0 && from) {
       const msg = messages[0]
@@ -80,8 +79,6 @@ const { data: existingClient } = await supabase
   .limit(1)
   .maybeSingle()
 
-
-
 if (!existingClient) {
   const { error: insertError } = await supabase
     .from('clientes')
@@ -109,6 +106,8 @@ if (!existingClient) {
         lastMessageId: msgId
       }
 
+markMessageAsRead(msdId)
+      
       const { data: insertedMessages, error } = await supabase.from('messages').insert([{
         user_id: formattedUserId,
         whatsapp_message_id: msgId,
