@@ -43,7 +43,7 @@ export default async function webhookRoutes(fastify) {
       const msgId = msg.id
       const msgType = msg.type
 
-      markMessageAsRead(msgId);
+      // markMessageAsRead(msgId);
 
       let userMessage = ''
       switch (msgType) {
