@@ -7,6 +7,7 @@ import { Server as IOServer } from 'socket.io'
 import webhookRoutes from './routes/webhook.js'
 import messageRoutes from './routes/messages.js'
 import flowRoutes from './routes/flow.js'
+import uploadRoutes from './routes/uploadRoutes.js'
 import { initDB, supabase } from './services/db.js'
 
 dotenv.config()
@@ -67,6 +68,7 @@ socket.on('join_room', (userId) => {
   fastify.register(webhookRoutes, { prefix: '/webhook' })
   fastify.register(messageRoutes, { prefix: '/messages' })
   fastify.register(flowRoutes, { prefix: '/flow' })
+  fastify.register(uploadRoutes, { prefix: '/bucket' })
   fastify.log.info('[start] Rotas registradas com sucesso.')
 
   // 7) Inicia o Fastify (HTTP + Socket.IO)
