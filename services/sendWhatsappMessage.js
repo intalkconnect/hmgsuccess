@@ -10,33 +10,6 @@ const {
   WHATSAPP_TOKEN: ACCESS_TOKEN
 } = process.env;
 
-/**
- * Chama Graph API para marcar como lida + typing indicator,
- * usando diretamente o messageId fornecido.
- */
-export async function markAsReadAndTyping(messageId) {
-  if (!messageId) return;
-
-  const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  const payload = {
-    messaging_product: 'whatsapp',
-    status: 'read',
-    message_id: messageId,
-    typing_indicator: { type: 'text' }
-  };
-
-  await axios.post(url, payload, {
-    headers: {
-      Authorization: `Bearer ${ACCESS_TOKEN}`,
-      'Content-Type': 'application/json'
-    }
-  });
-}
-
-/**
- * Envia mensagem via WhatsApp Cloud API.
- * Agora aceita opcionalmente `messageId` para fechar o typing.
- */
 export async function sendWhatsappMessage({ to, type, content, messageId }) {
 
   await sendTypingIndicator(to);
