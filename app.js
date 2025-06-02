@@ -78,7 +78,7 @@ socket.on('join_room', (userId) => {
     await fastify.listen({ port: PORT, host: '0.0.0.0' })
     fastify.log.info(`[start] Servidor rodando em http://0.0.0.0:${PORT}`)
   } catch (err) {
-    fastify.log.error('[start] Erro ao iniciar servidor:', err)
+    fastify.log.error(err, '[start] Erro ao iniciar servidor')
     process.exit(1)
   }
 }
