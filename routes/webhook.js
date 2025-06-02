@@ -38,9 +38,6 @@ export default async function webhookRoutes(fastify) {
     const from = contact?.wa_id
     const profileName = contact?.profile?.name || 'usuário'
 
-
-
-
     if (messages && messages.length > 0 && from) {
       const msg = messages[0]
       const msgId = msg.id
@@ -48,7 +45,7 @@ export default async function webhookRoutes(fastify) {
 
         if (msgId) {
     try {
-      await markMessageAsRead(msgId);
+      markMessageAsRead(msgId);
     } catch (err) {
       console.warn('[⚠️ Falha ao marcar como lida]', err.message);
     }
