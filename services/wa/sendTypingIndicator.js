@@ -16,19 +16,23 @@ export async function sendTypingIndicator(to) {
 
   try {
     await axios.post(
-      `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to,
-        type: 'typing_on'
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+  `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+  {
+    "messaging_product": "whatsapp",
+    "status": "read",
+    "message_id": to,
+    "typing_indicator": {
+      "type": "text"
+    }
+  },
+  {
+    headers: {
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    }
+  }
+);
+
     console.log('[✅ Enviado typing indicator]');
   } catch (err) {
     console.warn('[⚠️ Erro ao enviar typing]', err.response?.data || err.message);
