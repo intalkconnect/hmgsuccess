@@ -37,6 +37,14 @@ export async function markAsReadAndTyping(messageId) {
  * Agora aceita opcionalmente `messageId` para fechar o typing.
  */
 export async function sendWhatsappMessage({ to, type, content, messageId }) {
+
+    if (messageId) {
+    try {
+      await markAsReadAndTyping(messageId);
+    } catch (err) {
+      console.warn('[⚠️ Falha ao marcar como lida]', err.message);
+    }
+  }
   // Monta o payload normal
   const payload = {
     messaging_product: 'whatsapp',
