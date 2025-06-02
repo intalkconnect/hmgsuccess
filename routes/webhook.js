@@ -2,7 +2,6 @@
 import dotenv from 'dotenv'
 import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
-import { markMessageAsRead } from '../services/wa/markMessageAsRead.js';
 
 dotenv.config()
 
@@ -38,12 +37,13 @@ export default async function webhookRoutes(fastify) {
     const from = contact?.wa_id
     const profileName = contact?.profile?.name || 'usuário'
 
+
+
+
     if (messages && messages.length > 0 && from) {
       const msg = messages[0]
       const msgId = msg.id
       const msgType = msg.type
-
-      // markMessageAsRead(msgId);
 
       let userMessage = ''
       switch (msgType) {
