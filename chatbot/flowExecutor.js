@@ -5,7 +5,7 @@ import axios from 'axios';
 import vm from 'vm';
 import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
-import { sendMessageByChannel, markAsReadIfNeeded } from './messenger.js';
+import { sendMessageByChannel } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
@@ -121,8 +121,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       content &&
       ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
     ) {
-      // Marca como lido, se houver
-      await markAsReadIfNeeded(message);
 
       // Delay customizado (antes do send)
       if (block.sendDelayInSeconds) {
