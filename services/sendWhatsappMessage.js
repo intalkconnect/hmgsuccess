@@ -21,7 +21,7 @@ const {
  */
 export async function sendWhatsappMessage({ to, type, content, messageId }) {
 
-  sendTypingIndicator(to)
+  sendTypingIndicator(messageId)
   // Monta o payload normal
   const payload = {
     messaging_product: 'whatsapp',
