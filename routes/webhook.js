@@ -106,7 +106,7 @@ if (!existingClient) {
         lastMessageId: msgId
       }
 
-markMessageAsRead(msdId)
+markMessageAsRead(msgId)
       
       const { data: insertedMessages, error } = await supabase.from('messages').insert([{
         user_id: formattedUserId,
