@@ -22,7 +22,8 @@
     "fastify-multer": "^2.0.3",
     "minio": "^8.0.5",
     "uuid": "^11.1.0",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "tmp": "^0.2.3"
     
   },
   "devDependencies": {
