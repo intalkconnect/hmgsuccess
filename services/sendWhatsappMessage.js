@@ -34,29 +34,35 @@ export async function sendWhatsappMessage({ to, type, content, messageId }) {
   };
 
   try {
-    if (['image', 'audio', 'video', 'document'].includes(type)) {
-      console.log(`📤 Subindo mídia para o WhatsApp...`);
-      const mediaId = await uploadMediaToWhatsapp(content.url, type);
-      console.log(`✅ Mídia enviada. ID: ${mediaId}`);
+   if (['image', 'audio', 'video', 'document'].includes(type)) {
+  console.log(`📤 Subindo mídia para o WhatsApp...`);
+  const mediaId = await uploadMediaToWhatsapp(content.url, type);
+  console.log(`✅ Mídia enviada. ID: ${mediaId}`);
 
-      payload[type] = {
-        id: mediaId
-      };
+  payload[type] = {
+    id: mediaId
+  };
 
-      if (content.caption) {
-        payload[type].caption = content.caption;
-      }
+  // 🔥 Se for áudio tipo "voice message" (PTT)
+  if (type === 'audio' && content.voice === true) {
+    payload[type].voice = true;
+  }
 
-    } else if (type === 'location') {
-      payload[type] = {
-        latitude: content.latitude,
-        longitude: content.longitude,
-        name: content.name,
-        address: content.address
-      };
-    } else {
-      payload[type] = content;
-    }
+  if (content.caption) {
+    payload[type].caption = content.caption;
+  }
+
+} else if (type === 'location') {
+  payload[type] = {
+    latitude: content.latitude,
+    longitude: content.longitude,
+    name: content.name,
+    address: content.address
+  };
+} else {
+  payload[type] = content;
+}
+
 
     console.log('📦 Payload final para envio:', JSON.stringify(payload, null, 2));
 
