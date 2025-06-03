@@ -1,57 +1,63 @@
-// src/services/whatsappMedia.js
-
 import axios from 'axios';
 import FormData from 'form-data';
 import path from 'path';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import tmp from 'tmp';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
 
 dotenv.config();
 
-/**
- * Tipos válidos de mídia para upload no WhatsApp Cloud API.
- * - image    => imagens JPEG, PNG, etc.
- * - audio    => arquivos de áudio (OGG, MP3, etc.)
- * - document => PDFs, DOCX, XLSX, etc.
- */
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 const VALID_WHATSAPP_MEDIA_TYPES = ['image', 'audio', 'document'];
 
-/**
- * Faz download de um arquivo (imagem, áudio ou documento) a partir de `fileUrl`
- * e faz upload desse stream para o WhatsApp Cloud API (endpoint /v17.0/<PHONE_NUMBER_ID>/media),
- * retornando o `media_id` gerado pelo WhatsApp.
- *
- * @param {string} fileUrl - URL pública do arquivo a ser enviado (pode ser PNG/JPEG, OGG/MP3, PDF, etc.)
- * @param {'image'|'audio'|'document'} type - Tipo de mídia para o WhatsApp (`image`, `audio` ou `document`)
- * @returns {Promise<string>} - Promise que resolve com o `media_id` retornado pelo WhatsApp
- * @throws {Error} - Se o `type` for inválido, ou se houver falha ao baixar/uploadar o arquivo
- */
 export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
-  // 1) Verifica se o type passado é válido
   if (!VALID_WHATSAPP_MEDIA_TYPES.includes(type)) {
-    throw new Error(
-      `[uploadMediaToWhatsapp] Tipo de mídia inválido: "${type}". ` +
-      `Use um dos valores: ${VALID_WHATSAPP_MEDIA_TYPES.join(', ')}.`
-    );
+    throw new Error(`[uploadMediaToWhatsapp] Tipo de mídia inválido: "${type}". Use: ${VALID_WHATSAPP_MEDIA_TYPES.join(', ')}.`);
   }
 
   try {
-    // 2) Faz GET da URL para obter um stream do arquivo
     const response = await axios.get(fileUrl, { responseType: 'stream' });
-    const fileName = path.basename(fileUrl);
+    const ext = path.extname(fileUrl);
+    const originalFile = tmp.fileSync({ postfix: ext });
+    const writeStream = fs.createWriteStream(originalFile.name);
 
-    // 3) Prepara o FormData para o POST ao endpoint /media
+    // 1) Salva o arquivo temporariamente
+    await new Promise((resolve, reject) => {
+      response.data.pipe(writeStream);
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    let finalFilePath = originalFile.name;
+    let finalMime = response.headers['content-type'];
+
+    // 2) Se for áudio, converte para MP3
+    if (type === 'audio') {
+      const mp3Temp = tmp.fileSync({ postfix: '.mp3' });
+      await new Promise((resolve, reject) => {
+        ffmpeg(originalFile.name)
+          .audioCodec('libmp3lame')
+          .format('mp3')
+          .audioChannels(1) // WhatsApp requer canal único
+          .on('end', resolve)
+          .on('error', reject)
+          .save(mp3Temp.name);
+      });
+      finalFilePath = mp3Temp.name;
+      finalMime = 'audio/mpeg';
+    }
+
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
     form.append('type', type);
-
-    // 4) Adiciona o stream do arquivo (response.data) ao FormData
-    form.append('file', response.data, {
-      filename: fileName,
-      // Se o header não informar content-type, usa application/octet-stream
-      contentType: response.headers['content-type'] || 'application/octet-stream'
+    form.append('file', fs.createReadStream(finalFilePath), {
+      filename: path.basename(finalFilePath),
+      contentType: finalMime
     });
 
-    // 5) Envia a requisição POST para o WhatsApp Cloud API
     const res = await axios.post(
       `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/media`,
       form,
@@ -64,7 +70,7 @@ export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
     );
 
     console.log('[✅ uploadMediaToWhatsapp] Upload bem-sucedido:', res.data);
-    return res.data.id; // Retorna o media_id
+    return res.data.id;
   } catch (err) {
     console.error('[❌ uploadMediaToWhatsapp] Erro:', err.response?.data || err.message);
     throw new Error('Erro ao subir mídia para o WhatsApp');
