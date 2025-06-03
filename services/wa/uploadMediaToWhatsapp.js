@@ -8,7 +8,6 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 
 dotenv.config();
-
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const VALID_WHATSAPP_MEDIA_TYPES = ['image', 'audio', 'document'];
@@ -18,36 +17,44 @@ export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
     throw new Error(`[uploadMediaToWhatsapp] Tipo de mídia inválido: "${type}". Use: ${VALID_WHATSAPP_MEDIA_TYPES.join(', ')}.`);
   }
 
+  console.log('📥 Baixando arquivo da URL:', fileUrl);
+
+  const response = await axios.get(fileUrl, { responseType: 'stream' });
+  const ext = path.extname(fileUrl);
+  const originalFile = tmp.fileSync({ postfix: ext });
+  const writeStream = fs.createWriteStream(originalFile.name);
+
+  await new Promise((resolve, reject) => {
+    response.data.pipe(writeStream);
+    writeStream.on('finish', resolve);
+    writeStream.on('error', reject);
+  });
+
+  let finalFilePath = originalFile.name;
+  let finalMime = response.headers['content-type'];
+
   try {
-    const response = await axios.get(fileUrl, { responseType: 'stream' });
-    const ext = path.extname(fileUrl);
-    const originalFile = tmp.fileSync({ postfix: ext });
-    const writeStream = fs.createWriteStream(originalFile.name);
-
-    // 1) Salva o arquivo temporariamente
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writeStream);
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-    });
-
-    let finalFilePath = originalFile.name;
-    let finalMime = response.headers['content-type'];
-
-    // 2) Se for áudio, converte para MP3
     if (type === 'audio') {
-      const mp3Temp = tmp.fileSync({ postfix: '.mp3' });
+      console.log('🎙️ Convertendo áudio para OGG (opus, mono)...');
+      const oggFile = tmp.fileSync({ postfix: '.ogg' });
+
       await new Promise((resolve, reject) => {
         ffmpeg(originalFile.name)
-          .audioCodec('libmp3lame')
-          .format('mp3')
-          .audioChannels(1) // WhatsApp requer canal único
+          .audioCodec('libopus')      // Codec opus
+          .audioChannels(1)           // Canal único (mono)
+          .format('ogg')              // Formato OGG
           .on('end', resolve)
-          .on('error', reject)
-          .save(mp3Temp.name);
+          .on('error', (err) => {
+            console.error('❌ Erro na conversão FFmpeg:', err.message);
+            reject(err);
+          })
+          .save(oggFile.name);
       });
-      finalFilePath = mp3Temp.name;
-      finalMime = 'audio/mpeg';
+
+      finalFilePath = oggFile.name;
+      finalMime = 'audio/ogg';
+
+      originalFile.removeCallback();
     }
 
     const form = new FormData();
@@ -57,6 +64,8 @@ export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
       filename: path.basename(finalFilePath),
       contentType: finalMime
     });
+
+    console.log('📤 Enviando para WhatsApp API...');
 
     const res = await axios.post(
       `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/media`,
@@ -74,5 +83,7 @@ export async function uploadMediaToWhatsapp(fileUrl, type = 'image') {
   } catch (err) {
     console.error('[❌ uploadMediaToWhatsapp] Erro:', err.response?.data || err.message);
     throw new Error('Erro ao subir mídia para o WhatsApp');
+  } finally {
+    if (fs.existsSync(originalFile.name)) originalFile.removeCallback();
   }
 }
