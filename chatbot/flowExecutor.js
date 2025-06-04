@@ -22,10 +22,87 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   let currentBlockId = null;
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
-  if (session.current_block === 'atendimento_humano') {
-    await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
-    return null;
+if (canal === 'humano') {
+  const userId = mensagem.user_id; // ou como estiver nomeado no seu backend
+
+  // 1. Buscar configuração de distribuição
+  const { data: config } = await supabase
+    .from('config')
+    .select('valor')
+    .eq('chave', 'distribuicao_tickets')
+    .single();
+
+  const modoDistribuicao = config?.valor || 'manual';
+
+  if (modoDistribuicao === 'manual') {
+    console.log('[📥 Manual] Aguardando agente puxar o ticket.');
+    return;
   }
+
+  // 2. Verifica se já existe ticket aberto para o cliente
+  const { data: ticketAberto } = await supabase
+    .from('tickets')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'aberto')
+    .maybeSingle();
+
+  if (ticketAberto?.atendente) {
+    console.log(`[🎟️] Ticket já atribuído a ${ticketAberto.atendente}.`);
+    return;
+  }
+
+  // 3. Buscar atendentes online
+  const { data: atendentes } = await supabase
+    .from('atendentes')
+    .select('id')
+    .eq('status', 'online');
+
+  if (!atendentes?.length) {
+    console.warn('⚠️ Nenhum atendente online disponível.');
+    return;
+  }
+
+  // 4. Encontrar atendente com menos tickets abertos
+  let escolhido = null;
+  let menorQtd = Infinity;
+
+  for (const at of atendentes) {
+    const { count } = await supabase
+      .from('tickets')
+      .select('*', { count: 'exact', head: true })
+      .eq('atendente', at.id)
+      .eq('status', 'aberto');
+
+    if (count < menorQtd) {
+      menorQtd = count;
+      escolhido = at.id;
+    }
+  }
+
+  if (!escolhido) {
+    console.warn('⚠️ Não foi possível determinar atendente.');
+    return;
+  }
+
+  // 5. Atribuir ou criar ticket com o atendente escolhido
+  if (ticketAberto) {
+    await supabase
+      .from('tickets')
+      .update({ atendente: escolhido })
+      .eq('id', ticketAberto.id);
+    console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
+  } else {
+    await supabase.from('tickets').insert({
+      user_id: userId,
+      status: 'aberto',
+      atendente: escolhido,
+      criado_em: new Date().toISOString()
+    });
+    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}`);
+  }
+}
+
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
