@@ -24,16 +24,18 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   let currentBlockId = null;
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
-  if (session.current_block === 'atendimento_humano') {
-  // Salva queueName (fila) se existir
-  if (block.content?.queueName) {
-    sessionVars.fila = block.content.queueName;
-    console.log(`[🧭 Fila detectada no fluxo]: ${block.content.queueName}`);
+if (session.current_block === 'atendimento_humano') {
+  const blocoHumano = flow.blocks?.atendimento_humano;
+
+  if (blocoHumano?.content?.queueName) {
+    sessionVars.fila = blocoHumano.content.queueName;
+    console.log(`[🧭 Fila recuperada da sessão: ${sessionVars.fila}]`);
   }
 
   await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
   return null;
-  }
+}
+
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
