@@ -22,12 +22,13 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   let currentBlockId = null;
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
-if (canal === 'humano') {
-  const userId = mensagem.user_id; // ou como estiver nomeado no seu backend
+  if (session.current_block === 'atendimento_humano') {
+    await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
+    const userId = mensagem.user_id;
 
-  // 1. Buscar configuração de distribuição
+  // 1. Buscar configuração
   const { data: config } = await supabase
-    .from('config')
+    .from('settings')
     .select('valor')
     .eq('chave', 'distribuicao_tickets')
     .single();
@@ -39,7 +40,20 @@ if (canal === 'humano') {
     return;
   }
 
-  // 2. Verifica se já existe ticket aberto para o cliente
+  // 2. Buscar fila do cliente
+  const { data: cliente } = await supabase
+    .from('clientes')
+    .select('fila')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const filaCliente = cliente?.fila;
+  if (!filaCliente) {
+    console.warn('⚠️ Cliente não tem fila definida.');
+    return;
+  }
+
+  // 3. Verifica se já existe ticket aberto
   const { data: ticketAberto } = await supabase
     .from('tickets')
     .select('*')
@@ -52,22 +66,26 @@ if (canal === 'humano') {
     return;
   }
 
-  // 3. Buscar atendentes online
+  // 4. Buscar atendentes online dessa fila
   const { data: atendentes } = await supabase
     .from('atendentes')
-    .select('id')
+    .select('id, filas')
     .eq('status', 'online');
 
-  if (!atendentes?.length) {
-    console.warn('⚠️ Nenhum atendente online disponível.');
+  const candidatos = atendentes?.filter((a) =>
+    Array.isArray(a.filas) && a.filas.includes(filaCliente)
+  );
+
+  if (!candidatos?.length) {
+    console.warn('⚠️ Nenhum atendente online para a fila:', filaCliente);
     return;
   }
 
-  // 4. Encontrar atendente com menos tickets abertos
+  // 5. Encontrar atendente com menos tickets abertos
   let escolhido = null;
   let menorQtd = Infinity;
 
-  for (const at of atendentes) {
+  for (const at of candidatos) {
     const { count } = await supabase
       .from('tickets')
       .select('*', { count: 'exact', head: true })
@@ -85,7 +103,7 @@ if (canal === 'humano') {
     return;
   }
 
-  // 5. Atribuir ou criar ticket com o atendente escolhido
+  // 6. Atribuir ou criar ticket
   if (ticketAberto) {
     await supabase
       .from('tickets')
@@ -102,7 +120,6 @@ if (canal === 'humano') {
     console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}`);
   }
 }
-
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
