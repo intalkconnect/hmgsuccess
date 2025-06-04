@@ -1,5 +1,5 @@
 // engine/ticketManager.js
-import { supabase } from '../services/supabaseClient.js'
+import { supabase } from '../services/db.js'
 
 export async function distribuirTicket(userId) {
   // 1. Buscar configuração
