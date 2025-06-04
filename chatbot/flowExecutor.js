@@ -25,18 +25,17 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
 if (session.current_block === 'atendimento_humano') {
-  const blocoHumano = flow.blocks?.atendimento_humano;
-console.log(`##### ${blocoHumano}#####`)
+  const blocoHumano = flow.blocks['atendimento_humano'];
 
   if (blocoHumano?.content?.queueName) {
     sessionVars.fila = blocoHumano.content.queueName;
-    console.log(`[🧭 Fila recuperada da sessão: ${sessionVars.fila}]`);
+    console.log(`[🧭 Fila atribuída na retomada de sessão: "${sessionVars.fila}"]`);
   }
 
   await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
-  return null;
+  await distribuirTicket(userId);
+  return;
 }
-
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
