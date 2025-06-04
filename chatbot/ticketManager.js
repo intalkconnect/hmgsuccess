@@ -37,8 +37,8 @@ export async function distribuirTicket(userId) {
     .eq('status', 'aberto')
     .maybeSingle();
 
-  if (ticketAberto?.atendente) {
-    console.log(`[🎟️] Ticket já atribuído a ${ticketAberto.atendente}.`);
+  if (ticketAberto?.assigned_to) {
+    console.log(`[🎟️] Ticket já atribuído a ${ticketAberto.assigned_to}.`);
     return;
   }
 
@@ -68,7 +68,7 @@ export async function distribuirTicket(userId) {
 
   const mapaCargas = {};
   for (const linha of cargas) {
-    mapaCargas[linha.atendente] = linha.total_tickets;
+    mapaCargas[linha.assigned_to] = linha.total_tickets;
   }
 
   // 6. Escolher atendente com menos carga
@@ -88,14 +88,14 @@ export async function distribuirTicket(userId) {
   if (ticketAberto) {
     await supabase
       .from('tickets')
-      .update({ atendente: escolhido })
+      .update({ assigned_to: escolhido })
       .eq('id', ticketAberto.id);
     console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
   } else {
     await supabase.from('tickets').insert({
       user_id: userId,
       status: 'aberto',
-      atendente: escolhido,
+      assigned_to: escolhido,
       criado_em: new Date().toISOString()
     });
     console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}`);
