@@ -26,6 +26,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   // 2) Se já estiver em atendimento humano, salva e interrompe
 if (session.current_block === 'atendimento_humano') {
   const blocoHumano = flow.blocks['atendimento_humano'];
+  console.log(flow)
 
   if (blocoHumano?.content?.queueName) {
     sessionVars.fila = blocoHumano.content.queueName;
