@@ -9,7 +9,7 @@ export async function distribuirTicket(userId) {
     .eq('key', 'distribuicao_tickets')
     .single();
 
-  const modoDistribuicao = config?.valor || 'manual';
+  const modoDistribuicao = config?.value || 'manual';
 
   if (modoDistribuicao === 'manual') {
     console.log('[📥 Manual] Aguardando agente puxar o ticket.');
