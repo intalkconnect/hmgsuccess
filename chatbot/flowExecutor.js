@@ -7,6 +7,8 @@ import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
+import { distribuirTicket } from './ticketManager.js';
+
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = `${rawUserId}@w.msgcli.net`;
@@ -23,8 +25,9 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
   if (session.current_block === 'atendimento_humano') {
-    await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
-    return null;
+  await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
+  await distribuirTicket(userId);
+  return;
   }
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
