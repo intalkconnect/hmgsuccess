@@ -7,6 +7,7 @@ import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
+import { distribuirTicket } from './ticketManager.js';
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = `${rawUserId}@w.msgcli.net`;
@@ -170,9 +171,11 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     if (!block) break;
 
     // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
-    if (block.type === 'human') {
-      await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
-      return null;
+    if (session.current_block === 'atendimento_humano') {
+await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
+await distribuirTicket(userId);
+return;
+
     }
 
     // 4.2) Prepara o conteúdo do bloco (texto ou JSON)
