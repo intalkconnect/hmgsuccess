@@ -7,7 +7,6 @@ import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
-import { distribuirTicket } from './ticketManager.js';
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = `${rawUserId}@w.msgcli.net`;
@@ -25,102 +24,8 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   // 2) Se já estiver em atendimento humano, salva e interrompe
   if (session.current_block === 'atendimento_humano') {
     await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
-    const userId = mensagem.user_id;
-
-  // 1. Buscar configuração
-  const { data: config } = await supabase
-    .from('settings')
-    .select('valor')
-    .eq('chave', 'distribuicao_tickets')
-    .single();
-
-  const modoDistribuicao = config?.valor || 'manual';
-
-  if (modoDistribuicao === 'manual') {
-    console.log('[📥 Manual] Aguardando agente puxar o ticket.');
-    return;
+    return null;
   }
-
-  // 2. Buscar fila do cliente
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('fila')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  const filaCliente = cliente?.fila;
-  if (!filaCliente) {
-    console.warn('⚠️ Cliente não tem fila definida.');
-    return;
-  }
-
-  // 3. Verifica se já existe ticket aberto
-  const { data: ticketAberto } = await supabase
-    .from('tickets')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'aberto')
-    .maybeSingle();
-
-  if (ticketAberto?.atendente) {
-    console.log(`[🎟️] Ticket já atribuído a ${ticketAberto.atendente}.`);
-    return;
-  }
-
-  // 4. Buscar atendentes online dessa fila
-  const { data: atendentes } = await supabase
-    .from('atendentes')
-    .select('id, filas')
-    .eq('status', 'online');
-
-  const candidatos = atendentes?.filter((a) =>
-    Array.isArray(a.filas) && a.filas.includes(filaCliente)
-  );
-
-  if (!candidatos?.length) {
-    console.warn('⚠️ Nenhum atendente online para a fila:', filaCliente);
-    return;
-  }
-
-  // 5. Encontrar atendente com menos tickets abertos
-  let escolhido = null;
-  let menorQtd = Infinity;
-
-  for (const at of candidatos) {
-    const { count } = await supabase
-      .from('tickets')
-      .select('*', { count: 'exact', head: true })
-      .eq('atendente', at.id)
-      .eq('status', 'aberto');
-
-    if (count < menorQtd) {
-      menorQtd = count;
-      escolhido = at.id;
-    }
-  }
-
-  if (!escolhido) {
-    console.warn('⚠️ Não foi possível determinar atendente.');
-    return;
-  }
-
-  // 6. Atribuir ou criar ticket
-  if (ticketAberto) {
-    await supabase
-      .from('tickets')
-      .update({ atendente: escolhido })
-      .eq('id', ticketAberto.id);
-    console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
-  } else {
-    await supabase.from('tickets').insert({
-      user_id: userId,
-      status: 'aberto',
-      atendente: escolhido,
-      criado_em: new Date().toISOString()
-    });
-    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}`);
-  }
-}
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
   if (session.current_block && flow.blocks[session.current_block]) {
@@ -171,12 +76,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     if (!block) break;
 
     // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
-    if (session.current_block === 'atendimento_humano') {
-await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
-await distribuirTicket(userId);
-return;
+    if (block.type === 'human') {
+  await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
+  await distribuirTicket(userId);
+  return;
+}
 
-    }
 
     // 4.2) Prepara o conteúdo do bloco (texto ou JSON)
     let content = '';
