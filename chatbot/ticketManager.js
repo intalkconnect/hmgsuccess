@@ -5,8 +5,8 @@ export async function distribuirTicket(userId) {
   // 1. Buscar configuração
   const { data: config } = await supabase
     .from('settings')
-    .select('valor')
-    .eq('chave', 'distribuicao_tickets')
+    .select('value')
+    .eq('key', 'distribuicao_tickets')
     .single();
 
   const modoDistribuicao = config?.valor || 'manual';
