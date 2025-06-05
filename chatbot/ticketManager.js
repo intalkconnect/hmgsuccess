@@ -1,7 +1,7 @@
 // engine/ticketManager.js
 import { supabase } from '../services/db.js'
 
-export async function distribuirTicket(userId) {
+export async function distribuirTicket(userId, queueName) {
   // 1. Buscar configuração
   const { data: config } = await supabase
     .from('settings')
@@ -23,7 +23,7 @@ export async function distribuirTicket(userId) {
     .eq('user_id', userId)
     .maybeSingle();
 
-let filaCliente = cliente?.fila;
+let filaCliente = queueName;
 if (!filaCliente) {
   filaCliente = 'Default';
   console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
