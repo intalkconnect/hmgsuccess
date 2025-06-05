@@ -61,7 +61,7 @@ if (!candidatos?.length) {
     await supabase.from('tickets').insert({
       user_id: userId,
       status: 'aberto',
-      atendente: null,
+      assigned_to: null,
       fila,
       criado_em: new Date().toISOString()
     });
