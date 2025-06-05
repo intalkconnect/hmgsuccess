@@ -29,18 +29,17 @@ if (!filaCliente) {
   console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
 }
 
-  // 3. Verifica se já existe ticket aberto
-  const { data: ticketAberto } = await supabase
-    .from('tickets')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'open')
-    .maybeSingle();
+// 3. Verifica se já existe ticket aberto
+const { data: ticketAberto } = await supabase
+  .from('tickets')
+  .select('*')
+  .eq('user_id', userId)
+  .eq('status', 'aberto')
+  .maybeSingle();
 
-  if (ticketAberto?.assigned_to) {
-    console.log(`[🎟️] Ticket já atribuído a ${ticketAberto.assigned_to}.`);
-    return;
-  }
+if (ticketAberto) {
+  return;
+}
 
   // 4. Buscar atendentes online dessa fila
   const { data: atendentes } = await supabase
