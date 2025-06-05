@@ -25,17 +25,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
 if (session.current_block === 'atendimento_humano') {
-  const blocoHumano = flow.blocks['atendimento_humano'];
-  console.log(flow)
 
-  if (blocoHumano?.content?.queueName) {
-    sessionVars.fila = blocoHumano.content.queueName;
-    console.log(`[🧭 Fila atribuída na retomada de sessão: "${sessionVars.fila}"]`);
-  }
-
-  await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
-  await distribuirTicket(userId, sessionVars.fila);
-  return;
 }
 
   // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
@@ -88,8 +78,8 @@ if (session.current_block === 'atendimento_humano') {
 
     // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
     if (block.type === 'human') {
-  await saveSession(userId, 'atendimento_humano', flow.id, session.vars || {});
-  await distribuirTicket(userId);
+  await saveSession(userId, 'atendimento_humano', flow.id, session.vars);
+  await distribuirTicket(userId, session.vars.fila );
   return;
 }
 
