@@ -79,7 +79,7 @@ if (session.current_block === 'atendimento_humano') {
     // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
     if (block.type === 'human') {
   await saveSession(userId, 'atendimento_humano', flow.id, session.vars);
-  await distribuirTicket(userId, session.vars.fila );
+  await distribuirTicket(userId);
   return;
 }
 
