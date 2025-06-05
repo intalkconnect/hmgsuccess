@@ -34,7 +34,7 @@ if (session.current_block === 'atendimento_humano') {
   }
 
   await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
-  await distribuirTicket(userId, sessionVars.fila);
+  await distribuirTicket(userId);
   return;
 }
 
