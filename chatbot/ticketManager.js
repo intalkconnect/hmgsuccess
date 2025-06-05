@@ -23,12 +23,11 @@ export async function distribuirTicket(userId) {
     .eq('user_id', userId)
     .maybeSingle();
 
-  const filaCliente = cliente?.fila;
-  if (!filaCliente) {
-    filaCliente = 'Default';
-    console.warn('⚠️ Cliente não tem fila definida.');
-    return;
-  }
+let filaCliente = cliente?.fila;
+if (!filaCliente) {
+  filaCliente = 'Default';
+  console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
+}
 
   // 3. Verifica se já existe ticket aberto
   const { data: ticketAberto } = await supabase
@@ -54,22 +53,25 @@ export async function distribuirTicket(userId) {
   );
 
 if (!candidatos?.length) {
-  console.warn(`⚠️ Nenhum atendente online para a fila: "${fila}". Criando ticket sem atendente.`);
+  console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
 
-  // Se já existe ticket, mantém sem alteração
   if (!ticketAberto) {
-    await supabase.from('tickets').insert({
-      user_id: userId,
-      status: 'aberto',
-      assigned_to: null,
-      fila,
-      criado_em: new Date().toISOString()
+    const { data, error } = await supabase.rpc('create_ticket', {
+      p_user_id: userId,
+      p_fila: filaCliente,
+      p_assigned_to: null
     });
-    console.log(`[✅ Criado] Ticket SEM atendente para fila "${fila}"`);
+
+    if (error) {
+      console.error('❌ Erro ao criar ticket via função (sem atendente):', error);
+    } else {
+      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${data}`);
+    }
   }
 
   return;
 }
+
 
   // 5. Buscar contagem de tickets por atendente
   const { data: cargas, error } = await supabase
@@ -106,12 +108,17 @@ if (!candidatos?.length) {
       .eq('id', ticketAberto.id);
     console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
   } else {
-    await supabase.from('tickets').insert({
-      user_id: userId,
-      status: 'aberto',
-      assigned_to: escolhido,
-      criado_em: new Date().toISOString()
-    });
-    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}`);
+const { data, error } = await supabase.rpc('create_ticket', {
+  p_user_id: userId,
+  p_fila: filaCliente,
+  p_assigned_to: escolhido
+});
+
+if (error) {
+  console.error('❌ Erro ao criar ticket via função:', error);
+} else {
+  console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${data}`);
+}
+
   }
 }
