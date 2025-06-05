@@ -78,9 +78,16 @@ if (session.current_block === 'atendimento_humano') {
 
     // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
     if (block.type === 'human') {
-  await saveSession(userId, 'atendimento_humano', flow.id, session.vars);
-  await distribuirTicket(userId);
-  return;
+// Captura e salva a fila vinda do bloco (se existir)
+if (block.content?.queueName) {
+  sessionVars.fila = block.content.queueName;
+  console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
+}
+
+await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
+await distribuirTicket(userId, sessionVars.fila);
+return;
+
 }
 
 
