@@ -53,10 +53,23 @@ export async function distribuirTicket(userId) {
     Array.isArray(a.filas) && a.filas.includes(filaCliente)
   );
 
-  if (!candidatos?.length) {
-    console.warn('⚠️ Nenhum atendente online para a fila:', filaCliente);
-    return;
+if (!candidatos?.length) {
+  console.warn(`⚠️ Nenhum atendente online para a fila: "${fila}". Criando ticket sem atendente.`);
+
+  // Se já existe ticket, mantém sem alteração
+  if (!ticketAberto) {
+    await supabase.from('tickets').insert({
+      user_id: userId,
+      status: 'aberto',
+      atendente: null,
+      fila,
+      criado_em: new Date().toISOString()
+    });
+    console.log(`[✅ Criado] Ticket SEM atendente para fila "${fila}"`);
   }
+
+  return;
+}
 
   // 5. Buscar contagem de tickets por atendente
   const { data: cargas, error } = await supabase
