@@ -34,7 +34,7 @@ if (!filaCliente) {
     .from('tickets')
     .select('*')
     .eq('user_id', userId)
-    .eq('status', 'aberto')
+    .eq('status', 'open')
     .maybeSingle();
 
   if (ticketAberto?.assigned_to) {
