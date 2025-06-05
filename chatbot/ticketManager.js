@@ -25,6 +25,7 @@ export async function distribuirTicket(userId) {
 
   const filaCliente = cliente?.fila;
   if (!filaCliente) {
+    filaCliente = 'Default';
     console.warn('⚠️ Cliente não tem fila definida.');
     return;
   }
