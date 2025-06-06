@@ -16,8 +16,16 @@ export default async function uploadRoutes(fastify) {
     }
 
     try {
-      const extension = file.mimetype.split('/')[1] || 'bin'
-      const fileUrl = await uploadToMinio(file.buffer, file.originalname, extension)
+const mimeType = msg[msgType]?.mime_type || 'application/octet-stream';
+const extension = mimeType.split('/')[1] || 'bin';
+
+// O nome do arquivo enviado será, por exemplo, image-123456789.png
+const fileUrl = await uploadToMinio(
+  fileBuffer,
+  `${msgType}-${mediaId}.${extension}`,
+  mimeType
+);
+
 
       return reply.send({ url: fileUrl })
     } catch (err) {
