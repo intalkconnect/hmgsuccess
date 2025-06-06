@@ -14,24 +14,31 @@ const {
 /**
  * Envia mensagem via WhatsApp Cloud API com logs detalhados.
  */
-export async function sendWhatsappMessage({ to, type, content, messageId }) {
+export async function sendWhatsappMessage({ to, type, content, context }) {
   console.log('📨 [sendWhatsappMessage] Iniciando envio...');
   console.log('📍 Destinatário:', to);
   console.log('📝 Tipo:', type);
-  console.log('📦 Conteúdo inicial:', content);
+  console.log('📦 Conteúdo inicial:', content, context);
 
-  // Envia indicador de digitação (se messageId presente)
-  if (messageId) {
-    console.log('✍️ Enviando indicador de digitação...');
-    await sendTypingIndicator(messageId);
-  }
+  // // Envia indicador de digitação (se messageId presente)
+  // if (messageId) {
+  //   console.log('✍️ Enviando indicador de digitação...');
+  //   await sendTypingIndicator(messageId);
+  // }
 
   // Monta o payload base
-  const payload = {
-    messaging_product: 'whatsapp',
-    to,
-    type
-  };
+const payload = {
+  messaging_product: 'whatsapp',
+  to,
+  type,
+};
+
+// Adiciona `context` somente se existir
+if (context) {
+  payload.context = context;
+}
+
+console.log('📤 Payload final a ser enviado:', payload);
 
   try {
    if (['image', 'audio', 'video', 'document'].includes(type)) {
