@@ -55,9 +55,9 @@ console.log('📤 Payload final a ser enviado:', payload);
     payload[type].voice = true;
   }
 
-  if (content.caption) {
-    payload[type].caption = content.caption;
-  }
+  // if (content.caption) {
+  //   payload[type].caption = content.caption;
+  // }
 
 } else if (type === 'location') {
   payload[type] = {
