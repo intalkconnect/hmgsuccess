@@ -48,6 +48,7 @@ console.log('📤 Payload final a ser enviado:', payload);
 
   payload[type] = {
     id: mediaId
+    filename: content.filename || 'documento.pdf'
   };
 
   // 🔥 Se for áudio tipo "voice message" (PTT)
