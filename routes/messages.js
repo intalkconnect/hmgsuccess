@@ -12,7 +12,7 @@ export default async function messageRoutes(fastify, opts) {
   // 1) ENVIA QUALQUER TIPO (TEXT, IMAGE, AUDIO, LOCATION, INTERACTIVE etc)
   // ──────────────────────────────────────────────────────────────────────────
   fastify.post('/send', async (req, reply) => {
-    const { to, type, content } = req.body
+       const { to, type, content, context } = req.body
     // Garante o formato unificado de user_id
     const userId = `${to}@w.msgcli.net`
 
