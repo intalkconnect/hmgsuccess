@@ -4,6 +4,9 @@ import { supabase } from '../services/db.js'
 import { runFlow } from '../chatbot/flowExecutor.js'
 import { markMessageAsRead } from '../services/wa/markMessageAsRead.js'
 
+import axios from 'axios'
+import { uploadToMinio } from '../services/uploadToMinio.js'
+
 
 dotenv.config()
 
@@ -44,21 +47,72 @@ export default async function webhookRoutes(fastify) {
       const msgId = msg.id
       const msgType = msg.type
 
-      let userMessage = ''
-      switch (msgType) {
-        case 'text': userMessage = msg.text?.body || ''; break
-        case 'interactive':
-          userMessage = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || ''; break
-        case 'image': userMessage = '[imagem recebida]'; break
-        case 'video': userMessage = '[vídeo recebido]'; break
-        case 'audio': userMessage = '[áudio recebido]'; break
-        case 'document': userMessage = '[documento recebido]'; break
-        case 'location':
-          const { latitude, longitude } = msg.location || {}
-          userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
-          break
-        default: userMessage = `[tipo não tratado: ${msgType}]`
+      if (['image', 'video', 'audio', 'document'].includes(msgType)) {
+  try {
+    const mediaId = msg[msgType]?.id
+
+    // 1. Obter URL temporária da mídia
+    const mediaUrlRes = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
       }
+    })
+
+    const mediaUrl = mediaUrlRes.data.url
+    const mimeType = msg[msgType]?.mime_type || 'application/octet-stream'
+
+    // 2. Baixar o arquivo
+    const mediaRes = await axios.get(mediaUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+      }
+    })
+
+    const fileBuffer = mediaRes.data
+
+    // 3. Upload para o MinIO
+    const uploadedUrl = await uploadToMinio(fileBuffer, `${msgType}-${mediaId}`, mimeType)
+
+    // 4. Construir content final
+    if (msgType === 'audio') {
+      content = JSON.stringify({ url: uploadedUrl })
+      userMessage = '[áudio recebido]'
+    } else {
+      const filename = `${msgType}.${mimeType.split('/')[1]}`
+      content = JSON.stringify({
+        url: uploadedUrl,
+        filename,
+        caption: msg.caption || filename
+      })
+      userMessage = `[${msgType} recebido]`
+    }
+  } catch (err) {
+    console.error(`❌ Erro ao tratar mídia do tipo ${msgType}:`, err)
+    userMessage = `[${msgType} recebido - erro ao processar]`
+    content = userMessage
+  }
+} else {
+  // Trata tipos de mensagem sem mídia
+  switch (msgType) {
+    case 'text':
+      userMessage = msg.text?.body || ''
+      content = userMessage
+      break
+    case 'interactive':
+      userMessage = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || ''
+      content = userMessage
+      break
+    case 'location':
+      const { latitude, longitude } = msg.location || {}
+      userMessage = `📍 Localização recebida: ${latitude}, ${longitude}`
+      content = userMessage
+      break
+    default:
+      userMessage = `[tipo não tratado: ${msgType}]`
+      content = userMessage
+  }
+}
 
       console.log(`🧾 Mensagem recebida de ${from} (${msgType} | id=${msgId}):`, userMessage)
 
