@@ -18,7 +18,7 @@ export default async function messageRoutes(fastify, opts) {
 
     try {
       // Envia absolutamente TUDO via sendWhatsappMessage
-      const result = await sendWhatsappMessage({ to, type, content })
+      const result = await sendWhatsappMessage({ to, type, content, context })
 
       // Extrai message_id retornado (normalmente em result.messages[0].id)
       const whatsappMsgId = result.messages?.[0]?.id || null
