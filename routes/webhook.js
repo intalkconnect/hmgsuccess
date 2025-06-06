@@ -170,7 +170,7 @@ markMessageAsRead(msgId)
         whatsapp_message_id: msgId,
         direction: 'incoming',
         type: msgType,
-        content: userMessage,
+        content: content,
         timestamp: new Date().toISOString(),
         flow_id: latestFlow?.data?.id || null,
         replay_to: msg.context?.id || null,
