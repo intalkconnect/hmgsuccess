@@ -46,10 +46,14 @@ console.log('📤 Payload final a ser enviado:', payload);
   const mediaId = await uploadMediaToWhatsapp(content.url, type);
   console.log(`✅ Mídia enviada. ID: ${mediaId}`);
 
-  payload[type] = {
+if (type === 'document') {
+  payload.document = {
     id: mediaId,
     filename: content.filename || 'documento.pdf'
+    // caption: content.caption // <– deixe isso fora se não quiser “Sem título”
   };
+}
+
 
   // 🔥 Se for áudio tipo "voice message" (PTT)
   if (type === 'audio' && content.voice === true) {
