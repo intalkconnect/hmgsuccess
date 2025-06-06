@@ -75,7 +75,9 @@ let content = null
     const fileBuffer = mediaRes.data
 
     // 3. Upload para o MinIO
-    const uploadedUrl = await uploadToMinio(fileBuffer, `${msgType}-${mediaId}`, mimeType)
+const extension = mimeType.split('/')[1] || 'bin'
+const uploadedUrl = await uploadToMinio(fileBuffer, `${msgType}-${mediaId}.${extension}`, mimeType)
+
 
     // 4. Construir content final
     if (msgType === 'audio') {
