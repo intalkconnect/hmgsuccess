@@ -5,7 +5,7 @@ import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
 /**
  * Encapsula envio em diferentes canais.
  */
-export async function sendMessageByChannel(channel, to, type, content) {
+export async function sendMessageByChannel(channel, to, type, content, context) {
   if (channel === 'webchat') {
     return sendWebchatMessage({ to, content });
   }
@@ -15,7 +15,7 @@ export async function sendMessageByChannel(channel, to, type, content) {
   } else {
     whatsappContent = content;
   }
-  return sendWhatsappMessage({ to, type, content: whatsappContent });
+  return sendWhatsappMessage({ to, type, content: whatsappContent, context });
 }
 
 
