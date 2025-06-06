@@ -47,8 +47,8 @@ export default async function webhookRoutes(fastify) {
       const msgId = msg.id
       const msgType = msg.type
 
-      let content = null;
-      let userMessage = ''
+let content = null
+  let userMessage = ''
 
       if (['image', 'video', 'audio', 'document'].includes(msgType)) {
   try {
