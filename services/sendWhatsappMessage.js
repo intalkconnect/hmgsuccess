@@ -47,7 +47,7 @@ console.log('📤 Payload final a ser enviado:', payload);
   console.log(`✅ Mídia enviada. ID: ${mediaId}`);
 
   payload[type] = {
-    id: mediaId
+    id: mediaId,
     filename: content.filename || 'documento.pdf'
   };
 
