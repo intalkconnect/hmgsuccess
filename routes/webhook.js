@@ -175,12 +175,11 @@ markMessageAsRead(msgId)
         content: content,
         timestamp: new Date().toISOString(),
         flow_id: latestFlow?.data?.id || null,
-        replay_to: msg.context?.id || null,
+        reply_to: msg.context?.id || null,
         status: 'received',
         metadata: null,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        channel: 'whatsapp'
+        updated_at: new Date().toISOString()
       }]).select('*')
 
       if (error) {
