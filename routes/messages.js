@@ -39,7 +39,8 @@ export default async function messageRoutes(fastify, opts) {
         status:              'sent',
         metadata:            null,
         created_at:          new Date().toISOString(),
-        updated_at:          new Date().toISOString()
+        updated_at:          new Date().toISOString(),
+        channel: 'whatsapp'
       }
 
       // Grava no banco como outgoing
@@ -126,7 +127,8 @@ export default async function messageRoutes(fastify, opts) {
         status:              'sent',
         metadata:            JSON.stringify({ languageCode, components }),
         created_at:          new Date().toISOString(),
-        updated_at:          new Date().toISOString()
+        updated_at:          new Date().toISOString(),
+        channel: 'whatsapp'
       }
 
       const { data: insertedData, error: insertError } = await supabase
