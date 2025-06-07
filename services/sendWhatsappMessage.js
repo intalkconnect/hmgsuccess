@@ -44,27 +44,22 @@ console.log('📤 Payload final a ser enviado:', payload);
    if (['image', 'audio', 'video', 'document'].includes(type)) {
   console.log(`📤 Subindo mídia para o WhatsApp...`);
   const mediaId = await uploadMediaToWhatsapp(content.url, type);
-  console.log(`✅ Mídia enviada. ID: ${mediaId}`);
 
-if (type === 'document') {
-  payload.document = {
-    id: mediaId,
-    filename: content.filename || 'documento.pdf'
-    // caption: content.caption // <– deixe isso fora se não quiser “Sem título”
-  };
-}
+  if (!mediaId) {
+    throw new Error('Upload de mídia falhou — mediaId indefinido');
+  }
 
+  payload[type] = { id: mediaId };
 
-  // 🔥 Se for áudio tipo "voice message" (PTT)
   if (type === 'audio' && content.voice === true) {
     payload[type].voice = true;
   }
 
-  // if (content.caption) {
-  //   payload[type].caption = content.caption;
-  // }
-
-} else if (type === 'location') {
+  if (content.caption) {
+    payload[type].caption = content.caption;
+  }
+}
+ else if (type === 'location') {
   payload[type] = {
     latitude: content.latitude,
     longitude: content.longitude,
