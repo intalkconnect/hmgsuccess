@@ -35,7 +35,7 @@ export default async function messageRoutes(fastify, opts) {
 
         timestamp:           new Date().toISOString(),
         flow_id:             null,
-        replay_to:            context?.message_id || null,
+        reply_to:            context?.message_id || null,
         status:              'sent',
         metadata:            null,
         created_at:          new Date().toISOString(),
