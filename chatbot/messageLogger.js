@@ -1,10 +1,12 @@
-// chatbot/messageLogger.js
-import { supabase } from '../services/db.js'
-import { randomUUID } from 'crypto'
+import { pool } from '../services/db.js';
+import { randomUUID } from 'crypto';
 
-// chatbot/messageLogger.js
+/**
+ * Grava mensagem de saída (outgoing).
+ */
 export async function logOutgoingMessage(userId, type, content, flowId) {
-  const { data, error } = await supabase.from('messages').insert([{
+  const outgoing = {
+    id: randomUUID(),
     user_id: userId,
     whatsapp_message_id: randomUUID(),
     direction: 'outgoing',
@@ -17,36 +19,83 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     status: 'sent',
     metadata: null,
     created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }]).select('*') // 🔁 Garante retorno completo
+    updated_at: new Date().toISOString(),
+    channel: 'whatsapp',
+  };
 
-  if (error) {
-    console.error('❌ Erro ao gravar outgoing:', error)
-    return null
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO messages (
+        id, user_id, whatsapp_message_id, direction, type, content,
+        timestamp, flow_id, agent_id, queue_id, status, metadata,
+        created_at, updated_at, channel
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12,
+        $13, $14, $15
+      ) RETURNING *`,
+      [
+        outgoing.id,
+        outgoing.user_id,
+        outgoing.whatsapp_message_id,
+        outgoing.direction,
+        outgoing.type,
+        outgoing.content,
+        outgoing.timestamp,
+        outgoing.flow_id,
+        outgoing.agent_id,
+        outgoing.queue_id,
+        outgoing.status,
+        outgoing.metadata,
+        outgoing.created_at,
+        outgoing.updated_at,
+        outgoing.channel,
+      ]
+    );
+
+    console.log('✅ Mensagem outgoing gravada:', rows[0]);
+    return rows[0];
+  } catch (err) {
+    console.error('❌ Erro ao gravar outgoing:', err);
+    return null;
   }
-console.log('✅ Mensagem outgoing gravada:', data?.[0])
-
-  return data?.[0] || null // 🔁 Retorna registro inteiro (com id e direction)
 }
 
 /**
  * Grava um “fallback” quando falha no envio de mídia.
  */
 export async function logOutgoingFallback(userId, fallbackText, flowId) {
-  await supabase.from('messages').insert([{
-    id:                    randomUUID(),
-    user_id:               userId,
-    whatsapp_message_id:   randomUUID(),
-    direction:             'outgoing',
-    type:                  'text',
-    content:               fallbackText,
-    timestamp:             new Date().toISOString(),
-    flow_id:               flowId || null,
-    agent_id:              null,
-    queue_id:              null,
-    status:                'sent',
-    metadata:              JSON.stringify({ fallback: true }),
-    created_at:            new Date().toISOString(),
-    updated_at:            new Date().toISOString()
-  }]);
+  try {
+    await pool.query(
+      `INSERT INTO messages (
+        id, user_id, whatsapp_message_id, direction, type, content,
+        timestamp, flow_id, agent_id, queue_id, status, metadata,
+        created_at, updated_at, channel
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12,
+        $13, $14, $15
+      )`,
+      [
+        randomUUID(),
+        userId,
+        randomUUID(),
+        'outgoing',
+        'text',
+        fallbackText,
+        new Date().toISOString(),
+        flowId || null,
+        null,
+        null,
+        'sent',
+        JSON.stringify({ fallback: true }),
+        new Date().toISOString(),
+        new Date().toISOString(),
+        'whatsapp',
+      ]
+    );
+    console.log('✅ Fallback gravado');
+  } catch (err) {
+    console.error('❌ Erro ao gravar fallback:', err);
+  }
 }

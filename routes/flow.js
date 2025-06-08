@@ -1,110 +1,129 @@
-import { supabase } from '../services/db.js';
+import { pool } from '../services/db.js'
 
 export default async function flowRoutes(fastify, opts) {
+
+  // Cria e atualiza um fluxo
   fastify.post('/publish', async (req, reply) => {
-    const { data } = req.body;
+    const { data } = req.body
 
     if (!data || typeof data !== 'object') {
-      return reply.code(400).send({ error: 'Fluxo inválido ou ausente.' });
+      return reply.code(400).send({ error: 'Fluxo inválido ou ausente.' })
     }
 
-    const res = await supabase.from('flows').insert([
-      { data: {}, created_at: new Date().toISOString() }
-    ]).select();
+    try {
+      // 1) Insere fluxo vazio
+      const insertRes = await pool.query(
+        'INSERT INTO flows (data, created_at) VALUES ($1, $2) RETURNING id',
+        [{}, new Date().toISOString()]
+      )
 
-    if (res.error || !res.data?.[0]?.id) {
-      return reply.code(500).send({ error: 'Erro ao salvar fluxo', detail: res.error });
+      const insertedId = insertRes.rows[0].id
+      const updatedFlow = { ...data, id: insertedId }
+
+      // 2) Atualiza com o JSON final (com o ID embutido)
+      await pool.query(
+        'UPDATE flows SET data = $1 WHERE id = $2',
+        [updatedFlow, insertedId]
+      )
+
+      reply.send({ message: 'Fluxo publicado com sucesso.', id: insertedId })
+    } catch (err) {
+      reply.code(500).send({ error: 'Erro ao salvar fluxo', detail: err.message })
     }
+  })
 
-    const insertedId = res.data[0].id;
-    const updatedFlow = { ...data, id: insertedId };
-
-    // Atualiza o fluxo recém-criado com o ID incluído no JSON
-    await supabase.from('flows')
-      .update({ data: updatedFlow })
-      .eq('id', insertedId);
-
-    reply.send({ message: 'Fluxo publicado com sucesso.', id: insertedId });
-  });
-
+  // Recupera sessão por user_id
   fastify.get('/sessions/:user_id', async (req, reply) => {
-    const { user_id } = req.params;
-    const { data, error } = await supabase
-      .from('sessions')
-      .select('*')
-      .eq('user_id', user_id)
-      .single();
+    const { user_id } = req.params
 
-    if (error) {
-      reply.code(404).send({ error: 'Sessão não encontrada' });
-    } else {
-      reply.send(data);
+    try {
+      const { rows } = await pool.query(
+        'SELECT * FROM sessions WHERE user_id = $1 LIMIT 1',
+        [user_id]
+      )
+
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: 'Sessão não encontrada' })
+      }
+
+      reply.send(rows[0])
+    } catch (err) {
+      reply.code(500).send({ error: 'Erro ao buscar sessão', detail: err.message })
     }
-  });
+  })
 
+  // Cria ou atualiza sessão
   fastify.post('/sessions/:user_id', async (req, reply) => {
-    const { user_id } = req.params;
-    const { current_block, flow_id, vars } = req.body;
+    const { user_id } = req.params
+    const { current_block, flow_id, vars } = req.body
 
-    const { error } = await supabase
-      .from('sessions')
-      .upsert({
-        user_id,
-        current_block,
-        last_flow_id: flow_id,
-        vars,
-        updated_at: new Date().toISOString()
-      });
+    try {
+      await pool.query(
+        `INSERT INTO sessions (user_id, current_block, last_flow_id, vars, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE
+         SET current_block = $2,
+             last_flow_id = $3,
+             vars = $4,
+             updated_at = $5`,
+        [user_id, current_block, flow_id, vars, new Date().toISOString()]
+      )
 
-    if (error) {
-      reply.code(500).send({ error: 'Erro ao salvar sessão', detail: error });
-    } else {
-      reply.send({ message: 'Sessão salva com sucesso.' });
+      reply.send({ message: 'Sessão salva com sucesso.' })
+    } catch (err) {
+      reply.code(500).send({ error: 'Erro ao salvar sessão', detail: err.message })
     }
-  });
+  })
 
-  // Exemplo em pseudo‐código (Fastify + Supabase)
-fastify.post('/activate', async (req, reply) => {
-  const { id } = req.body;
-  await supabase
-    .from('flows')
-    .update({ active: true })
-    .eq('id', id);
-  return reply.code(200).send({ success: true });
-});
+  // Ativa um fluxo
+  fastify.post('/activate', async (req, reply) => {
+    const { id } = req.body
 
-fastify.get('/latest', async (req, reply) => {
-  // Retorna apenas id, status (active) e created_at dos 10 últimos registros
-  const { data: rows, error } = await supabase
-    .from('flows')
-    // seleciona só as colunas id, status e created_at
-    .select('id, active, created_at')
-    .order('created_at', { ascending: false })
-    .limit(10);
+    try {
+      await pool.query(
+        'UPDATE flows SET active = TRUE WHERE id = $1',
+        [id]
+      )
 
-  if (error) {
-    return reply.code(500).send({ error: 'Falha ao buscar últimos fluxos', detail: error });
-  }
+      reply.code(200).send({ success: true })
+    } catch (err) {
+      reply.code(500).send({ error: 'Erro ao ativar fluxo', detail: err.message })
+    }
+  })
 
-  return reply.code(200).send(rows);
-});
+  // Lista os 10 últimos fluxos
+  fastify.get('/latest', async (req, reply) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, active, created_at
+         FROM flows
+         ORDER BY created_at DESC
+         LIMIT 10`
+      )
 
-  // GET /flows/data/:id  → retorna apenas o campo "data" do fluxo
-fastify.get('/data/:id', async (req, reply) => {
-  const { id } = req.params;
+      reply.code(200).send(rows)
+    } catch (err) {
+      reply.code(500).send({ error: 'Falha ao buscar últimos fluxos', detail: err.message })
+    }
+  })
 
-  const { data: row, error } = await supabase
-    .from('flows')
-    .select('data')
-    .eq('id', id)
-    .single();
+  // Retorna somente o campo data de um fluxo
+  fastify.get('/data/:id', async (req, reply) => {
+    const { id } = req.params
 
-  if (error) {
-    return reply.code(404).send({ error: 'Fluxo não encontrado', detail: error });
-  }
+    try {
+      const { rows } = await pool.query(
+        'SELECT data FROM flows WHERE id = $1 LIMIT 1',
+        [id]
+      )
 
-  return reply.code(200).send(row.data);
-});
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: 'Fluxo não encontrado' })
+      }
 
-
+      reply.code(200).send(rows[0].data)
+    } catch (err) {
+      reply.code(500).send({ error: 'Erro ao buscar fluxo', detail: err.message })
+    }
+  })
 }

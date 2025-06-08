@@ -1,29 +1,27 @@
 // services/db.js
-import { createClient } from '@supabase/supabase-js'
+import pkg from 'pg'
 import dotenv from 'dotenv'
 
 dotenv.config()
 
-// Vamos exportar uma variável “supabase” que será atribuída dentro de initDB()
-export let supabase
+const { Pool } = pkg
+
+export let pool
 
 export const initDB = async () => {
-  // 1) Validar que as variáveis de ambiente existem
-  const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_KEY  // atenção: confira se no seu .env você definiu exatamente SUPABASE_KEY!
-  if (!url || !key) {
-    throw new Error(
-      'As variáveis de ambiente SUPABASE_URL e SUPABASE_KEY devem estar definidas no seu .env'
-    )
+  const url = process.env.DATABASE_URL
+  if (!url) {
+    throw new Error('DATABASE_URL não está definida no .env')
   }
 
-  // 2) Criar o client Supabase (mesmo comportamento que você tinha antes)
-  supabase = createClient(url, key)
+  pool = new Pool({ connectionString: url })
 
-  // 3) (Opcional) testar a conexão imediatamente, para levantar erro cedo
-  const { error } = await supabase.from('messages').select('id').limit(1)
-  if (error) {
-    console.error('Erro ao conectar no Supabase dentro de initDB():', error)
-    throw error
+  // Teste simples de conexão
+  try {
+    const res = await pool.query('SELECT 1')
+    console.log('✅ Conexão PostgreSQL OK')
+  } catch (err) {
+    console.error('❌ Erro ao conectar no PostgreSQL:', err)
+    throw err
   }
 }

@@ -1,21 +1,44 @@
-// engine/sessionManager.js
-import { supabase } from '../services/db.js';
+import { pool } from '../services/db.js';
 
+/**
+ * Carrega a sessão de um usuário.
+ */
 export async function loadSession(userId) {
-  const { data } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-  return data || { current_block: null, vars: {} };
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM sessions WHERE user_id = $1 LIMIT 1`,
+      [userId]
+    );
+
+    return rows[0] || { current_block: null, vars: {} };
+  } catch (err) {
+    console.error('❌ Erro ao carregar sessão:', err);
+    return { current_block: null, vars: {} };
+  }
 }
 
+/**
+ * Salva (ou atualiza) a sessão de um usuário.
+ */
 export async function saveSession(userId, currentBlock, flowId, vars) {
-  await supabase.from('sessions').upsert([{
-    user_id:       userId,
-    current_block: currentBlock,
-    last_flow_id:  flowId,
-    vars,
-    updated_at:    new Date().toISOString()
-  }]);
+  try {
+    await pool.query(
+      `INSERT INTO sessions (user_id, current_block, last_flow_id, vars, updated_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id)
+       DO UPDATE SET current_block = EXCLUDED.current_block,
+                     last_flow_id = EXCLUDED.last_flow_id,
+                     vars = EXCLUDED.vars,
+                     updated_at = EXCLUDED.updated_at`,
+      [
+        userId,
+        currentBlock,
+        flowId,
+        vars,
+        new Date().toISOString()
+      ]
+    );
+  } catch (err) {
+    console.error('❌ Erro ao salvar sessão:', err);
+  }
 }
