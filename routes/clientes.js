@@ -1,7 +1,7 @@
 // backend/routes/clientes.js
 export default async function clientesRoutes(fastify) {
   // GET /clientes/:user_id → retorna dados do cliente
-  fastify.get('/clientes/:user_id', async (req, reply) => {
+  fastify.get('/:user_id', async (req, reply) => {
     const { user_id } = req.params;
 
     try {
