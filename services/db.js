@@ -5,7 +5,7 @@ dotenv.config();
 
 const { Pool } = pkg;
 
-export let pool;
+let pool; // 🔧 Remova o `export` aqui
 
 export const initDB = async () => {
   const url = process.env.DATABASE_URL;
@@ -26,4 +26,4 @@ export const initDB = async () => {
   return pool;
 };
 
-export { pool }; // ✅ Exporta para permitir `import { pool }`
+export { pool }; // ✅ exportação única e correta
