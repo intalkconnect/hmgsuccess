@@ -10,6 +10,7 @@ import messageRoutes from "./routes/messages.js";
 import flowRoutes from "./routes/flow.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import conversationsRoutes from './routes/conversations.js'
+import settingsRoutes from './routes/settingsRoutes.js'
 import { initDB } from "./services/db.js";
 
 dotenv.config();
@@ -70,6 +71,7 @@ async function start() {
   fastify.register(flowRoutes, { prefix: "/flow" });
   fastify.register(uploadRoutes, { prefix: "/bucket" }); // ✅ upload com multipart
   fastify.register(conversationsRoutes)
+  fastify.register(settingsRoutes)
   fastify.log.info("[start] Rotas registradas com sucesso.");
 
   const PORT = process.env.PORT || 3000;
