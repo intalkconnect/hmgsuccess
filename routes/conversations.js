@@ -2,7 +2,7 @@
 export default async function conversationsRoutes(fastify) {
   const { pool } = fastify;
 
-  fastify.get('/conversations/last-read', async (req, reply) => {
+  fastify.get('/last-read', async (req, reply) => {
     try {
       const result = await pool.query(`SELECT user_id, last_read FROM user_last_read`);
       return reply.send(result.rows);
@@ -13,7 +13,7 @@ export default async function conversationsRoutes(fastify) {
   });
 
 
-  fastify.post('/conversations/last-read', async (req, reply) => {
+  fastify.post('/last-read', async (req, reply) => {
     const { user_id, last_read } = req.body;
 
     if (!user_id || !last_read) {
@@ -36,7 +36,7 @@ export default async function conversationsRoutes(fastify) {
   });
 
 
-  fastify.get('/conversations/unread-counts', async (req, reply) => {
+  fastify.get('/unread-counts', async (req, reply) => {
     try {
       const result = await pool.query(`SELECT * FROM contar_mensagens_nao_lidas()`);
       return reply.send(result.rows);
