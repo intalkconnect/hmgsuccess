@@ -3,7 +3,7 @@ export default async function conversationsRoutes(fastify) {
   const { pool } = fastify;
 
   // GET /conversations
-  fastify.get('/conversations', async (req, reply) => {
+  fastify.get('/', async (req, reply) => {
     try {
       const result = await pool.query(`
         SELECT DISTINCT ON (m.user_id)
