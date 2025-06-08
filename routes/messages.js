@@ -128,6 +128,24 @@ export default async function messageRoutes(fastify, opts) {
     }
   });
 
+  export default async function messagesRoutes(fastify) {
+  // GET /messages/:user_id → retorna mensagens ordenadas por timestamp
+  fastify.get('/:user_id', async (req, reply) => {
+    const { user_id } = req.params;
+
+    try {
+      const { rows } = await fastify.pg.query(
+        'SELECT * FROM messages WHERE user_id = $1 ORDER BY timestamp ASC',
+        [user_id]
+      );
+      return rows;
+    } catch (err) {
+      console.error('Erro ao buscar mensagens:', err);
+      return reply.status(500).send({ error: 'Erro interno ao buscar mensagens' });
+    }
+  });
+} 
+
   // ──────────────────────────────────────────────────────────────────────────
   // 2) ENVIA TEMPLATE (rota separada)
   // ──────────────────────────────────────────────────────────────────────────
