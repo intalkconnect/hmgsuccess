@@ -1,4 +1,12 @@
-// services/db.js
+import pkg from 'pg';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const { Pool } = pkg;
+
+export let pool;
+
 export const initDB = async () => {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -15,5 +23,7 @@ export const initDB = async () => {
     throw err;
   }
 
-  return pool; // <-- ESSENCIAL!
+  return pool;
 };
+
+export { pool }; // ✅ Exporta para permitir `import { pool }`
