@@ -2,7 +2,7 @@ import { dbPool } from '../services/db.js';
 
 async function settingsRoutes(fastify, options) {
   // Rota GET /settings - Busca uma configuração específica
-  fastify.get('/settings', async (req, reply) => {
+  fastify.get('/', async (req, reply) => {
     const { key } = req.query;
 
     // Validação do parâmetro
@@ -43,7 +43,7 @@ async function settingsRoutes(fastify, options) {
   });
 
   // Rota POST /settings - Cria/atualiza uma configuração
-  fastify.post('/settings', async (req, reply) => {
+  fastify.post('/', async (req, reply) => {
     const { key, value, description } = req.body;
 
     // Validação dos dados
