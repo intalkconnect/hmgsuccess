@@ -1,7 +1,6 @@
-// app.js
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
-import multipart from '@fastify/multipart' // ✅ necessário para multipart/form-data
+import multipart from '@fastify/multipart'
 import dotenv from 'dotenv'
 import { Server as IOServer } from 'socket.io'
 
@@ -18,11 +17,11 @@ async function buildServer() {
 
   await fastify.register(cors, { origin: '*' })
 
-  // ✅ Registro global do suporte a uploads multipart/form-data
+  // Registro global do suporte a uploads multipart/form-data
   await fastify.register(multipart)
 
   await initDB()
-  fastify.log.info('[initDB] Conexão com Supabase estabelecida.')
+  fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.') // Mensagem atualizada
 
   return fastify
 }
@@ -59,7 +58,7 @@ async function start() {
   fastify.register(webhookRoutes, { prefix: '/webhook' })
   fastify.register(messageRoutes, { prefix: '/messages' })
   fastify.register(flowRoutes, { prefix: '/flow' })
-  fastify.register(uploadRoutes, { prefix: '/bucket' }) // ✅ upload com multipart
+  fastify.register(uploadRoutes, { prefix: '/bucket' })
   fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
