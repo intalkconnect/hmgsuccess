@@ -2,36 +2,29 @@ import { dbPool } from '../services/db.js';
 
 async function settingsRoutes(fastify, options) {
   // Rota GET /settings - Busca uma configuração específica
-  fastify.get('/', async (req, reply) => {
+  // Rota GET /settings - Retorna todas as configurações
+fastify.get('/', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT 
+         key,
+         value,
+         description,
+         created_at,
+         updated_at
+       FROM settings`
+    );
 
-    try {
-      const { rows } = await dbPool.query(
-        `SELECT 
-          key,
-          value,
-          description,
-          created_at,
-          updated_at
-         FROM settings 
-         WHERE key = $1 
-         LIMIT 1`
-      );
+    return reply.send(rows);
+  } catch (error) {
+    fastify.log.error('Erro ao buscar configurações:', error);
+    return reply.code(500).send({ 
+      error: 'Erro interno ao buscar configurações',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
-      if (rows.length === 0) {
-        return reply.code(404).send({ 
-          error: 'Configuração não encontrada' 
-        });
-      }
-
-      return reply.send(rows[0]);
-    } catch (error) {
-      fastify.log.error('Erro ao buscar configuração:', error);
-      return reply.code(500).send({ 
-        error: 'Erro interno ao buscar configuração',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  });
 
   // Rota POST /settings - Cria/atualiza uma configuração
   fastify.post('/', async (req, reply) => {
