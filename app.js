@@ -12,7 +12,8 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import conversationsRoutes from './routes/conversations.js'
 import settingsRoutes from './routes/settingsRoutes.js'
 import clientesRoutes from './routes/clientes.js';
-import { initDB } from "./services/db.js";
+import { initDB, pool } from "./services/db.js";
+
 
 dotenv.config();
 
@@ -24,8 +25,9 @@ async function buildServer() {
   // ✅ Registro global do suporte a uploads multipart/form-data
   await fastify.register(multipart);
 
-  await initDB();
-  fastify.log.info("[initDB] Conexão com PostgreSQL estabelecida.");
+await initDB();
+fastify.decorate('pool', pool);
+fastify.log.info("[initDB] Conexão com PostgreSQL estabelecida.");
 
   return fastify;
 }
