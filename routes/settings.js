@@ -3,8 +3,6 @@ import { dbPool } from '../services/db.js';
 async function settingsRoutes(fastify, options) {
   // Rota GET /settings - Busca uma configuração específica
   fastify.get('/', async (req, reply) => {
-    const { key } = req.query;
-
 
     try {
       const { rows } = await dbPool.query(
