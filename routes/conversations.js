@@ -6,20 +6,20 @@ export default async function conversationsRoutes(fastify) {
   fastify.get('/conversations', async (req, reply) => {
     try {
       const result = await pool.query(`
-        SELECT
-          m.user_id,
-          MAX(m.timestamp) as timestamp,
-          MAX(m.id) as last_message_id,
-          c.name,
-          c.fila,
-          c.ticket_number,
-          c.atendido,
-          m.content,
-          m.channel
-        FROM messages m
-        LEFT JOIN clientes c ON m.user_id = c.user_id
-        GROUP BY m.user_id, c.name, c.fila, c.ticket_number, c.atendido, m.content, m.channel
-        ORDER BY timestamp DESC
+        SELECT DISTINCT ON (m.user_id)
+  m.user_id,
+  m.id as last_message_id,
+  m.timestamp,
+  m.content,
+  m.channel,
+  c.name,
+  c.fila,
+  c.ticket_number,
+  c.atendido
+FROM messages m
+LEFT JOIN clientes c ON m.user_id = c.user_id
+ORDER BY m.user_id, m.timestamp DESC
+
       `);
       return reply.send(result.rows);
     } catch (err) {
