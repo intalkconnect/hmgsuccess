@@ -25,8 +25,9 @@ async function buildServer() {
   // ✅ Registro global do suporte a uploads multipart/form-data
   await fastify.register(multipart);
 
-await initDB();
-fastify.decorate('pool', pool);
+const db = await initDB();
+fastify.decorate('pool', db);
+
 fastify.log.info("[initDB] Conexão com PostgreSQL estabelecida.");
 
   return fastify;
