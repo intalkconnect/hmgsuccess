@@ -2,7 +2,7 @@
 import { pool } from '../services/db.js';
 
 export default async function settingsRoutes(fastify, opts) {
-  fastify.get('/settings/distribuicao_tickets', async (req, reply) => {
+  fastify.get('/distribuicao_tickets', async (req, reply) => {
     try {
       const result = await pool.query(
         `SELECT value FROM settings WHERE key = 'distribuicao_tickets' LIMIT 1`
