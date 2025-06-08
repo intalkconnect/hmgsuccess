@@ -5,12 +5,6 @@ async function settingsRoutes(fastify, options) {
   fastify.get('/', async (req, reply) => {
     const { key } = req.query;
 
-    // Validação do parâmetro
-    if (!key) {
-      return reply.code(400).send({ 
-        error: 'Parâmetro key é obrigatório' 
-      });
-    }
 
     try {
       const { rows } = await dbPool.query(
@@ -22,8 +16,7 @@ async function settingsRoutes(fastify, options) {
           updated_at
          FROM settings 
          WHERE key = $1 
-         LIMIT 1`,
-        [key]
+         LIMIT 1`
       );
 
       if (rows.length === 0) {
