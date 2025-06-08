@@ -2,7 +2,7 @@ import { dbPool } from '../services/db.js';
 
 async function clientesRoutes(fastify, options) {
   // Rota GET /clientes - Busca dados de um cliente específico
-  fastify.get('/clientes', async (req, reply) => {
+  fastify.get('/', async (req, reply) => {
     const { user_id } = req.query;
 
     // Validação do parâmetro
@@ -43,7 +43,7 @@ async function clientesRoutes(fastify, options) {
   });
 
   // Rota POST /clientes - Cria/atualiza um cliente
-  fastify.post('/clientes', async (req, reply) => {
+  fastify.post('/', async (req, reply) => {
     const { user_id, name, phone } = req.body;
 
     // Validação dos dados
