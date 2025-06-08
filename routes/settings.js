@@ -44,10 +44,9 @@ fastify.get('/', async (req, reply) => {
          ON CONFLICT (key) 
          DO UPDATE SET 
            value = EXCLUDED.value,
-           description = EXCLUDED.description,
            updated_at = NOW()
          RETURNING *`,
-        [key, value, description]
+        [key, value]
       );
 
       return reply.code(201).send(rows[0]);
