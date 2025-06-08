@@ -3,28 +3,23 @@ export default async function conversationsRoutes(fastify) {
   const { pool } = fastify;
 
   // GET /conversations
-  fastify.get('/', async (req, reply) => {
-    try {
-      const result = await pool.query(`
-        SELECT DISTINCT ON (m.user_id)
-  m.user_id,
-  m.id as last_message_id,
-  m.timestamp,
-  m.content,
-  m.channel,
-  c.name,
-  c.fila,
-  c.ticket_number,
-  c.atendido
-FROM messages m
-LEFT JOIN clientes c ON m.user_id = c.user_id
-ORDER BY m.user_id, m.timestamp DESC
+fastify.get('/:user_id', async (req, reply) => {
+    const { user_id } = req.params;
 
-      `);
-      return reply.send(result.rows);
+    try {
+      const { rows } = await pool.query(
+        'SELECT name, phone FROM clientes WHERE user_id = $1 LIMIT 1',
+        [user_id]
+      );
+
+      if (rows.length === 0) {
+        return reply.status(404).send({ error: 'Cliente não encontrado' });
+      }
+
+      return reply.send(rows[0]);
     } catch (err) {
       fastify.log.error(err);
-      return reply.code(500).send({ error: 'Erro ao buscar conversas' });
+      return reply.status(500).send({ error: 'Erro interno ao buscar cliente' });
     }
   });
 
