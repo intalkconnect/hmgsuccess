@@ -71,8 +71,8 @@ async function start() {
   fastify.register(messageRoutes, { prefix: "/messages" });
   fastify.register(flowRoutes, { prefix: "/flow" });
   fastify.register(uploadRoutes, { prefix: "/bucket" }); // ✅ upload com multipart
-  fastify.register(conversationsRoutes, { prefix: "/api" });
-  fastify.register(settingsRoutes, { prefix: "/api/settings" });
+  fastify.register(conversationsRoutes, { prefix: "/conversations" });
+  fastify.register(settingsRoutes, { prefix: "/settings" });
   fastify.register(clientesRoutes, { prefix: '/clientes' });
   fastify.log.info("[start] Rotas registradas com sucesso.");
 
