@@ -5,6 +5,8 @@ dotenv.config();
 
 const { Pool } = pkg;
 
+let pool; // 🔧 Remova o `export` aqui
+
 export const initDB = async () => {
   const url = process.env.DATABASE_URL;
   if (!url) {
