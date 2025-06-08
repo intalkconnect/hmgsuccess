@@ -1,28 +1,48 @@
-import pkg from 'pg';
+// services/db.js
+import pg from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const { Pool } = pkg;
-
-let pool; // ✅ pool está no escopo do módulo
+// Vamos usar o Pool do pg para gerenciar conexões
+const { Pool } = pg;
+export let dbPool;
 
 export const initDB = async () => {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error('DATABASE_URL não está definida no .env');
+  // 1) Validar que as variáveis de ambiente existem
+  const user = process.env.PG_USER;
+  const host = process.env.PG_HOST;
+  const database = process.env.PG_DATABASE;
+  const password = process.env.PG_PASSWORD;
+  const port = process.env.PG_PORT || 5432;
+
+  if (!user || !host || !database || !password) {
+    throw new Error(
+      'As variáveis de ambiente PG_USER, PG_HOST, PG_DATABASE e PG_PASSWORD devem estar definidas no seu .env'
+    );
   }
 
-  pool = new Pool({ connectionString: url });
+  // 2) Criar o pool de conexões
+  dbPool = new Pool({
+    user,
+    host,
+    database,
+    password,
+    port,
+    // Opcional: configurações adicionais do pool
+    max: 20, // máximo de clientes no pool
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  });
 
+  // 3) Testar a conexão
   try {
-    await pool.query('SELECT 1');
-    console.log('✅ Conexão PostgreSQL OK');
-  } catch (err) {
-    console.error('❌ Erro ao conectar no PostgreSQL:', err);
-    throw err;
+    const client = await dbPool.connect();
+    // Teste simples - você pode ajustar para uma tabela específica do seu projeto
+    await client.query('SELECT 1');
+    client.release();
+  } catch (error) {
+    console.error('Erro ao conectar no PostgreSQL dentro de initDB():', error);
+    throw error;
   }
 };
-
-// ✅ Exporta a variável `pool` depois de ter sido declarada
-export { pool };
