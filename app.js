@@ -8,6 +8,9 @@ import webhookRoutes from './routes/webhook.js'
 import messageRoutes from './routes/messages.js'
 import flowRoutes from './routes/flow.js'
 import uploadRoutes from './routes/uploadRoutes.js'
+import clientesRoutes from './routes/clientes.js';
+import settingsRoutes from './routes/settings.js';
+
 import { initDB } from './services/db.js'
 
 dotenv.config()
@@ -59,6 +62,8 @@ async function start() {
   fastify.register(messageRoutes, { prefix: '/messages' })
   fastify.register(flowRoutes, { prefix: '/flow' })
   fastify.register(uploadRoutes, { prefix: '/bucket' })
+  fastify.register(clientesRoutes, { prefix: '/clientes' });
+  fastify.register(settingsRoutes, { prefix: '/settings' });
   fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
