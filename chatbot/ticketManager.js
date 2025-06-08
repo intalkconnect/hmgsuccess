@@ -1,123 +1,125 @@
-// engine/ticketManager.js
-import { supabase } from '../services/db.js'
+import { dbPool } from '../services/db.js'
 
 export async function distribuirTicket(userId, queueName) {
-  // 1. Buscar configuração
-  const { data: config } = await supabase
-    .from('settings')
-    .select('value')
-    .eq('key', 'distribuicao_tickets')
-    .single();
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
 
-  const modoDistribuicao = config?.value || 'manual';
+    // 1. Buscar configuração
+    const configQuery = await client.query(
+      'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+      ['distribuicao_tickets']
+    );
+    const modoDistribuicao = configQuery.rows[0]?.value || 'manual';
 
-  if (modoDistribuicao === 'manual') {
-    console.log('[📥 Manual] Aguardando agente puxar o ticket.');
-    return;
-  }
+    if (modoDistribuicao === 'manual') {
+      console.log('[📥 Manual] Aguardando agente puxar o ticket.');
+      await client.query('COMMIT');
+      return;
+    }
 
-  // 2. Buscar fila do cliente
-  const { data: cliente } = await supabase
-    .from('clientes')
-    .select('fila')
-    .eq('user_id', userId)
-    .maybeSingle();
+    // 2. Determinar fila do cliente
+    let filaCliente = queueName;
+    if (!filaCliente) {
+      const clienteQuery = await client.query(
+        'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
+        [userId]
+      );
+      filaCliente = clienteQuery.rows[0]?.fila || 'Default';
+      if (!queueName) {
+        console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
+      }
+    }
 
-let filaCliente = queueName;
-if (!filaCliente) {
-  filaCliente = 'Default';
-  console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
-}
+    // 3. Verificar ticket aberto existente
+    const ticketAbertoQuery = await client.query(
+      'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
+      [userId, 'open']
+    );
+    const ticketAberto = ticketAbertoQuery.rows[0];
 
-// 3. Verifica se já existe ticket aberto
-const { data: ticketAberto } = await supabase
-  .from('tickets')
-  .select('*')
-  .eq('user_id', userId)
-  .eq('status', 'open')
-  .maybeSingle();
+    if (ticketAberto) {
+      await client.query('COMMIT');
+      return;
+    }
 
-if (ticketAberto) {
-  return;
-}
+    // 4. Buscar atendentes online da fila
+    const atendentesQuery = await client.query(
+      'SELECT id, filas FROM atendentes WHERE status = $1',
+      ['online']
+    );
+    const candidatos = atendentesQuery.rows.filter(a => 
+      Array.isArray(a.filas) && a.filas.includes(filaCliente)
+    );
 
-  // 4. Buscar atendentes online dessa fila
-  const { data: atendentes } = await supabase
-    .from('atendentes')
-    .select('id, filas')
-    .eq('status', 'online');
+    if (!candidatos.length) {
+      console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
+      
+      const createTicketQuery = await client.query(
+        `INSERT INTO tickets (
+          user_id, fila, assigned_to, status, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, 'open', NOW(), NOW()
+        ) RETURNING id`,
+        [userId, filaCliente, null]
+      );
+      
+      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${createTicketQuery.rows[0].id}`);
+      await client.query('COMMIT');
+      return;
+    }
 
-  const candidatos = atendentes?.filter((a) =>
-    Array.isArray(a.filas) && a.filas.includes(filaCliente)
-  );
-
-if (!candidatos?.length) {
-  console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
-
-  if (!ticketAberto) {
-    const { data, error } = await supabase.rpc('create_ticket', {
-      p_user_id: userId,
-      p_fila: filaCliente,
-      p_assigned_to: null
+    // 5. Buscar contagem de tickets por atendente
+    const cargasQuery = await client.query(`
+      SELECT assigned_to, COUNT(*) as total_tickets 
+      FROM tickets 
+      WHERE status = 'open' AND assigned_to IS NOT NULL
+      GROUP BY assigned_to
+    `);
+    const mapaCargas = {};
+    cargasQuery.rows.forEach(linha => {
+      mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
     });
 
-    if (error) {
-      console.error('❌ Erro ao criar ticket via função (sem atendente):', error);
-    } else {
-      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${data}`);
+    // 6. Escolher atendente com menos carga
+    candidatos.sort((a, b) => {
+      const cargaA = mapaCargas[a.id] || 0;
+      const cargaB = mapaCargas[b.id] || 0;
+      return cargaA - cargaB;
+    });
+
+    const escolhido = candidatos[0]?.id;
+    if (!escolhido) {
+      console.warn('⚠️ Não foi possível determinar atendente.');
+      await client.query('COMMIT');
+      return;
     }
-  }
 
-  return;
-}
+    // 7. Atribuir ou criar ticket
+    if (ticketAberto) {
+      await client.query(
+        'UPDATE tickets SET assigned_to = $1, updated_at = NOW() WHERE id = $2',
+        [escolhido, ticketAberto.id]
+      );
+      console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
+    } else {
+      const createTicketQuery = await client.query(
+        `INSERT INTO tickets (
+          user_id, fila, assigned_to, status, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, 'open', NOW(), NOW()
+        ) RETURNING id`,
+        [userId, filaCliente, escolhido]
+      );
+      console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${createTicketQuery.rows[0].id}`);
+    }
 
-
-  // 5. Buscar contagem de tickets por atendente
-  const { data: cargas, error } = await supabase
-    .rpc('contar_tickets_ativos_por_atendente');
-
-  if (error) {
-    console.error('Erro ao contar tickets por atendente:', error);
-    return;
-  }
-
-  const mapaCargas = {};
-  for (const linha of cargas) {
-    mapaCargas[linha.assigned_to] = linha.total_tickets;
-  }
-
-  // 6. Escolher atendente com menos carga
-  candidatos.sort((a, b) => {
-    const cargaA = mapaCargas[a.id] || 0;
-    const cargaB = mapaCargas[b.id] || 0;
-    return cargaA - cargaB;
-  });
-
-  const escolhido = candidatos[0]?.id;
-  if (!escolhido) {
-    console.warn('⚠️ Não foi possível determinar atendente.');
-    return;
-  }
-
-  // 7. Atribuir ou criar ticket
-  if (ticketAberto) {
-    await supabase
-      .from('tickets')
-      .update({ assigned_to: escolhido })
-      .eq('id', ticketAberto.id);
-    console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
-  } else {
-const { data, error } = await supabase.rpc('create_ticket', {
-  p_user_id: userId,
-  p_fila: filaCliente,
-  p_assigned_to: escolhido
-});
-
-if (error) {
-  console.error('❌ Erro ao criar ticket via função:', error);
-} else {
-  console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${data}`);
-}
-
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Erro na distribuição de ticket:', error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
