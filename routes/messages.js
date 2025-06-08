@@ -94,6 +94,64 @@ export default async function messageRoutes(fastify, opts) {
     }
   });
 
+  fastify.get('/', async (req, reply) => {
+  const { user_id } = req.query;
+  
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT * FROM messages 
+       WHERE user_id = $1 
+       ORDER BY timestamp ASC`,
+      [user_id]
+    );
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to fetch messages' });
+  }
+});
+
+  // Rota para contagem de mensagens não lidas
+fastify.get('/unread_count', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT user_id, COUNT(*) as unread_count 
+      FROM messages
+      WHERE status = 'unread'
+      GROUP BY user_id
+    `);
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to count unread messages' });
+  }
+});
+
+  fastify.get('/user_last_read', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query('SELECT * FROM user_last_read');
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to fetch last read times' });
+  }
+});
+
+  // Rotas de Last Read
+fastify.post('/user_last_read', async (req, reply) => {
+  const { user_id, last_read } = req.body;
+
+  try {
+    await dbPool.query(
+      `INSERT INTO user_last_read (user_id, last_read)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET last_read = $2`,
+      [user_id, last_read]
+    );
+    reply.send({ success: true });
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to update last read' });
+  }
+});
+
   // ──────────────────────────────────────────────────────────────────────────
   // 2) ENVIA TEMPLATE (rota separada)
   // ──────────────────────────────────────────────────────────────────────────
