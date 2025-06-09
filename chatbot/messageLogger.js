@@ -6,7 +6,7 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     INSERT INTO messages (
       user_id, whatsapp_message_id, direction, type, content,
       timestamp, flow_id, status,
-      metadata, created_at, updated_at
+      metadata, created_at, updated_at, channel
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10,
@@ -25,7 +25,8 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     'sent',
     null, // metadata
     new Date().toISOString(),
-    new Date().toISOString()
+    new Date().toISOString(),
+    'whatsapp'
   ];
 
   try {
@@ -46,11 +47,11 @@ export async function logOutgoingFallback(userId, fallbackText, flowId) {
   const query = `
     INSERT INTO messages (
       id, user_id, whatsapp_message_id, direction, type,
-      content, timestamp, flow_id, status, metadata, created_at, updated_at
+      content, timestamp, flow_id, status, metadata, created_at, updated_at, channel
     ) VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10,
-      $11, $12
+      $11, $12, $13
     )
   `;
 
@@ -66,7 +67,8 @@ export async function logOutgoingFallback(userId, fallbackText, flowId) {
     'sent',
     JSON.stringify({ fallback: true }),
     new Date().toISOString(),
-    new Date().toISOString()
+    new Date().toISOString(),
+    'whatsapp'
   ];
 
   try {
