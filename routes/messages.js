@@ -42,17 +42,48 @@ export default async function messageRoutes(fastify, opts) {
       }
 
       // Grava no banco como outgoing
-      const { data: insertedData, error: insertError } = await supabase
-        .from('messages')
-        .insert([outgoingMsg])
-        .select()
+      const insertQuery = `
+  INSERT INTO messages (
+    user_id,
+    whatsapp_message_id,
+    direction,
+    type,
+    content,
+    timestamp,
+    flow_id,
+    reply_to,
+    status,
+    metadata,
+    created_at,
+    updated_at,
+    channel
+  ) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13
+  )
+  RETURNING *
+`;
 
-      if (insertError) {
-        fastify.log.error('[messageRoutes] Erro ao inserir outgoing:', insertError)
-        return reply.code(500).send({ error: 'Falha ao gravar mensagem no banco' })
-      }
+const values = [
+  outgoingMsg.user_id,
+  outgoingMsg.whatsapp_message_id,
+  outgoingMsg.direction,
+  outgoingMsg.type,
+  outgoingMsg.content,
+  outgoingMsg.timestamp,
+  outgoingMsg.flow_id,
+  outgoingMsg.reply_to,
+  outgoingMsg.status,
+  outgoingMsg.metadata,
+  outgoingMsg.created_at,
+  outgoingMsg.updated_at,
+  outgoingMsg.channel
+];
 
-      const mensagemInserida = insertedData[0]
+const { rows } = await dbPool.query(insertQuery, values);
+const mensagemInserida = rows[0];
+
 
       // Emite evento via Socket.IO para atualizar o front
       if (fastify.io) {
