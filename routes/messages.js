@@ -111,46 +111,60 @@ export default async function messageRoutes(fastify, opts) {
 });
 
   // Rota para contagem de mensagens não lidas
-fastify.get('/unread_count', async (req, reply) => {
+fastify.put('/read-status/:user_id', async (req, reply) => {
+  const { user_id } = req.params;
+  const { last_read } = req.body;
+
+  if (!last_read) {
+    return reply.code(400).send({ error: 'last_read é obrigatório' });
+  }
+
   try {
     const { rows } = await dbPool.query(`
-      SELECT user_id, COUNT(*) as unread_count 
-      FROM messages
-      WHERE status = 'unread'
-      GROUP BY user_id
+      INSERT INTO user_last_read (user_id, last_read)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id) 
+      DO UPDATE SET last_read = EXCLUDED.last_read
+      RETURNING *
+    `, [user_id, last_read]);
+
+    return reply.send(rows[0]);
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Erro ao salvar last_read' });
+  }
+});
+
+fastify.get('/read-status', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query('SELECT user_id, last_read FROM user_last_read');
+    return reply.send(rows);
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Erro ao buscar last_read' });
+  }
+});
+
+fastify.get('/unread-counts', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT 
+        m.user_id,
+        COUNT(*) AS unread_count
+      FROM mensagens m
+      LEFT JOIN user_last_read r ON m.user_id = r.user_id
+      WHERE m.created_at > COALESCE(r.last_read, '1970-01-01')
+      GROUP BY m.user_id
     `);
-    reply.send(rows);
+
+    return reply.send(rows);
   } catch (error) {
-    reply.code(500).send({ error: 'Failed to count unread messages' });
+    fastify.log.error('Erro ao contar mensagens não lidas:', error);
+    return reply.code(500).send({ error: 'Erro ao contar mensagens não lidas' });
   }
 });
 
-  fastify.get('/user_last_read', async (req, reply) => {
-  try {
-    const { rows } = await dbPool.query('SELECT * FROM user_last_read');
-    reply.send(rows);
-  } catch (error) {
-    reply.code(500).send({ error: 'Failed to fetch last read times' });
-  }
-});
 
-  // Rotas de Last Read
-fastify.post('/user_last_read', async (req, reply) => {
-  const { user_id, last_read } = req.body;
-
-  try {
-    await dbPool.query(
-      `INSERT INTO user_last_read (user_id, last_read)
-       VALUES ($1, $2)
-       ON CONFLICT (user_id)
-       DO UPDATE SET last_read = $2`,
-      [user_id, last_read]
-    );
-    reply.send({ success: true });
-  } catch (error) {
-    reply.code(500).send({ error: 'Failed to update last read' });
-  }
-});
 
   // ──────────────────────────────────────────────────────────────────────────
   // 2) ENVIA TEMPLATE (rota separada)
