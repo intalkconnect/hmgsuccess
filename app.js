@@ -11,6 +11,7 @@ import uploadRoutes from './routes/uploadRoutes.js'
 import clientesRoutes from './routes/clientes.js';
 import settingsRoutes from './routes/settings.js';
 import ticketsRoutes from './routes/tickets.js';
+import chatsRoutes from './routes/chats.js';
 
 import { initDB } from './services/db.js'
 
@@ -66,6 +67,7 @@ async function start() {
   fastify.log.info('[start] Registrando rotas...')
 fastify.register(webhookRoutes, { prefix: '/webhook' }) // permanece
 fastify.register(messageRoutes, { prefix: '/api/v1/messages' })
+fastify.register(chatsRoutes, { prefix: '/api/v1/chats' })
 fastify.register(flowRoutes, { prefix: '/api/v1/flow' })
 fastify.register(uploadRoutes, { prefix: '/api/v1/bucket' })
 fastify.register(clientesRoutes, { prefix: '/api/v1/clientes' })
