@@ -18,7 +18,12 @@ dotenv.config()
 async function buildServer() {
   const fastify = Fastify({ logger: true })
 
-  await fastify.register(cors, { origin: '*' })
+  await fastify.register(cors, {
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  // allowedHeaders: ['Content-Type', 'Authorization'] // adicione se usa JWT ou headers customizados
+})
+
 
   // Registro global do suporte a uploads multipart/form-data
   await fastify.register(multipart)
