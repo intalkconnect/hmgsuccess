@@ -123,27 +123,31 @@ fastify.put('/read-status/:user_id', async (req, reply) => {
     const { rows } = await dbPool.query(`
       INSERT INTO user_last_read (user_id, last_read)
       VALUES ($1, $2)
-      ON CONFLICT (user_id) 
+      ON CONFLICT (user_id)
       DO UPDATE SET last_read = EXCLUDED.last_read
-      RETURNING *
+      RETURNING user_id, last_read
     `, [user_id, last_read]);
 
-    return reply.send(rows[0]);
+    return reply.send(rows[0]); // igual supabase: { user_id, last_read }
   } catch (error) {
     fastify.log.error(error);
-    return reply.code(500).send({ error: 'Erro ao salvar last_read' });
+    return reply.code(500).send({ error: 'Erro ao atualizar last_read' });
   }
 });
 
+
 fastify.get('/read-status', async (req, reply) => {
   try {
-    const { rows } = await dbPool.query('SELECT user_id, last_read FROM user_last_read');
-    return reply.send(rows);
+    const { rows } = await dbPool.query(`
+      SELECT user_id, last_read FROM user_last_read
+    `);
+    return reply.send(rows); // [{ user_id, last_read }, ...]
   } catch (error) {
     fastify.log.error(error);
     return reply.code(500).send({ error: 'Erro ao buscar last_read' });
   }
 });
+
 
 fastify.get('/unread-counts', async (req, reply) => {
   try {
@@ -157,12 +161,13 @@ fastify.get('/unread-counts', async (req, reply) => {
       GROUP BY m.user_id
     `);
 
-    return reply.send(rows);
+    return reply.send(rows); // [{ user_id, unread_count }, ...]
   } catch (error) {
-    fastify.log.error('Erro ao contar mensagens não lidas:', error);
+    fastify.log.error(error);
     return reply.code(500).send({ error: 'Erro ao contar mensagens não lidas' });
   }
 });
+
 
 
 
