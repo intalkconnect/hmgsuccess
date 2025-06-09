@@ -9,9 +9,6 @@ fastify.get('/', async (req, reply) => {
       `SELECT 
          key,
          value,
-         description,
-         created_at,
-         updated_at
        FROM settings`
     );
 
