@@ -10,6 +10,7 @@ import flowRoutes from './routes/flow.js'
 import uploadRoutes from './routes/uploadRoutes.js'
 import clientesRoutes from './routes/clientes.js';
 import settingsRoutes from './routes/settings.js';
+import ticketsRoutes from './routes/tickets.js';
 
 import { initDB } from './services/db.js'
 
@@ -69,6 +70,7 @@ fastify.register(flowRoutes, { prefix: '/api/v1/flow' })
 fastify.register(uploadRoutes, { prefix: '/api/v1/bucket' })
 fastify.register(clientesRoutes, { prefix: '/api/v1/clientes' })
 fastify.register(settingsRoutes, { prefix: '/api/v1/settings' })
+fastify.register(ticketsRoutes, { prefix: '/api/v1/tickets' })
 fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
