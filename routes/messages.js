@@ -228,7 +228,7 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // LISTAR MENSAGENS POR USUÁRIO
   // ───────────────────────────────────────────────
-fastify.get('/messages/:user_id', {
+fastify.get('/:user_id', {
   schema: {
     params: {
       type: 'object',
@@ -254,4 +254,3 @@ fastify.get('/messages/:user_id', {
   }
 });
 
-}
