@@ -94,21 +94,7 @@ export default async function messageRoutes(fastify, opts) {
     }
   });
 
-  fastify.get('/', async (req, reply) => {
-  const { user_id } = req.query;
-  
-  try {
-    const { rows } = await dbPool.query(
-      `SELECT * FROM messages 
-       WHERE user_id = $1 
-       ORDER BY timestamp ASC`,
-      [user_id]
-    );
-    reply.send(rows);
-  } catch (error) {
-    reply.code(500).send({ error: 'Failed to fetch messages' });
-  }
-});
+
 
   // Rota para contagem de mensagens não lidas
 fastify.put('/read-status/:user_id', async (req, reply) => {
@@ -135,7 +121,6 @@ fastify.put('/read-status/:user_id', async (req, reply) => {
   }
 });
 
-
 fastify.get('/read-status', async (req, reply) => {
   try {
     const { rows } = await dbPool.query(`
@@ -147,7 +132,6 @@ fastify.get('/read-status', async (req, reply) => {
     return reply.code(500).send({ error: 'Erro ao buscar last_read' });
   }
 });
-
 
 fastify.get('/unread-counts', async (req, reply) => {
   try {
@@ -168,7 +152,21 @@ fastify.get('/unread-counts', async (req, reply) => {
   }
 });
 
-
+  fastify.get('/:user_id', async (req, reply) => {
+  const { user_id } = req.query;
+  
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT * FROM messages 
+       WHERE user_id = $1 
+       ORDER BY timestamp ASC`,
+      [user_id]
+    );
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to fetch messages' });
+  }
+});
 
 
   // ──────────────────────────────────────────────────────────────────────────
