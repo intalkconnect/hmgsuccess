@@ -15,7 +15,7 @@ export async function distribuirTicket(userId, queueName) {
     if (modoDistribuicao === 'manual') {
       console.log('[📥 Manual] Aguardando agente puxar o ticket.');
       await client.query('COMMIT');
-      return;
+      return { mode: 'manual' };
     }
 
     // 2. Determinar fila do cliente
@@ -40,7 +40,7 @@ export async function distribuirTicket(userId, queueName) {
 
     if (ticketAberto) {
       await client.query('COMMIT');
-      return;
+      return { ticketExists: true, ticketId: ticketAberto.id };
     }
 
     // 4. Buscar atendentes online da fila
@@ -55,18 +55,22 @@ export async function distribuirTicket(userId, queueName) {
     if (!candidatos.length) {
       console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
       
+      // MODIFICADO: Usando a função create_ticket
       const createTicketQuery = await client.query(
-        `INSERT INTO tickets (
-          user_id, fila, assigned_to, status, created_at, updated_at
-        ) VALUES (
-          $1, $2, $3, 'open', NOW(), NOW()
-        ) RETURNING id`,
+        `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, null]
       );
       
-      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${createTicketQuery.rows[0].id}`);
+      const ticketNumber = createTicketQuery.rows[0].ticket_number;
+      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${ticketNumber}`);
+      
       await client.query('COMMIT');
-      return;
+      return { 
+        success: true, 
+        ticketNumber, 
+        assignedTo: null,
+        mode: 'auto-no-agent' 
+      };
     }
 
     // 5. Buscar contagem de tickets por atendente
@@ -92,7 +96,7 @@ export async function distribuirTicket(userId, queueName) {
     if (!escolhido) {
       console.warn('⚠️ Não foi possível determinar atendente.');
       await client.query('COMMIT');
-      return;
+      return { success: false, error: 'No agent available' };
     }
 
     // 7. Atribuir ou criar ticket
@@ -102,23 +106,35 @@ export async function distribuirTicket(userId, queueName) {
         [escolhido, ticketAberto.id]
       );
       console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
+      await client.query('COMMIT');
+      return { 
+        success: true, 
+        ticketId: ticketAberto.id, 
+        assignedTo: escolhido,
+        mode: 'auto-updated' 
+      };
     } else {
+      // MODIFICADO: Usando a função create_ticket
       const createTicketQuery = await client.query(
-        `INSERT INTO tickets (
-          user_id, fila, assigned_to, status, created_at, updated_at
-        ) VALUES (
-          $1, $2, $3, 'open', NOW(), NOW()
-        ) RETURNING id`,
+        `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, escolhido]
       );
-      console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${createTicketQuery.rows[0].id}`);
+      
+      const ticketNumber = createTicketQuery.rows[0].ticket_number;
+      console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
+      
+      await client.query('COMMIT');
+      return { 
+        success: true, 
+        ticketNumber, 
+        assignedTo: escolhido,
+        mode: 'auto-created' 
+      };
     }
-
-    await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Erro na distribuição de ticket:', error);
-    throw error;
+    return { success: false, error: error.message };
   } finally {
     client.release();
   }
