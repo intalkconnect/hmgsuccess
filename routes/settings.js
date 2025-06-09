@@ -25,7 +25,7 @@ fastify.get('/', async (req, reply) => {
 
   // Rota POST /settings - Cria/atualiza uma configuração
   fastify.post('/', async (req, reply) => {
-    const { key, value, description } = req.body;
+    const { key, value } = req.body;
 
     // Validação dos dados
     if (!key || value === undefined) {
