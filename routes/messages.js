@@ -129,6 +129,28 @@ export default async function messageRoutes(fastify, opts) {
     }
   });
 
+  fastify.get('/conversations', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT 
+        m.user_id,
+        MAX(m.timestamp) AS last_message_at,
+        c.name,
+        c.phone
+      FROM messages m
+      LEFT JOIN clientes c ON m.user_id = c.user_id
+      GROUP BY m.user_id, c.name, c.phone
+      ORDER BY last_message_at DESC
+    `);
+
+    return reply.send(rows); // [{ user_id, name, phone, last_message_at }]
+  } catch (error) {
+    fastify.log.error('Erro ao listar conversas:', error);
+    return reply.code(500).send({ error: 'Erro ao listar conversas' });
+  }
+});
+
+
   // ───────────────────────────────────────────────
   // ENVIO DE TEMPLATE
   // ───────────────────────────────────────────────
