@@ -58,13 +58,13 @@ async function start() {
   })
 
   fastify.log.info('[start] Registrando rotas...')
-  fastify.register(webhookRoutes, { prefix: '/webhook' })
-  fastify.register(messageRoutes, { prefix: '/messages' })
-  fastify.register(flowRoutes, { prefix: '/flow' })
-  fastify.register(uploadRoutes, { prefix: '/bucket' })
-  fastify.register(clientesRoutes, { prefix: '/clientes' });
-  fastify.register(settingsRoutes, { prefix: '/settings' });
-  fastify.log.info('[start] Rotas registradas com sucesso.')
+fastify.register(webhookRoutes, { prefix: '/webhook' }) // permanece
+fastify.register(messageRoutes, { prefix: '/api/v1/messages' })
+fastify.register(flowRoutes, { prefix: '/api/v1/flow' })
+fastify.register(uploadRoutes, { prefix: '/api/v1/bucket' })
+fastify.register(clientesRoutes, { prefix: '/api/v1/clientes' })
+fastify.register(settingsRoutes, { prefix: '/api/v1/settings' })
+fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
   try {
