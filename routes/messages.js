@@ -253,4 +253,4 @@ fastify.get('/:user_id', {
     reply.code(500).send({ error: 'Failed to fetch messages' });
   }
 });
-
+}
