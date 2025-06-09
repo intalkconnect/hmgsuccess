@@ -228,25 +228,30 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // LISTAR MENSAGENS POR USUÁRIO
   // ───────────────────────────────────────────────
-  fastify.get('/:user_id', {
-    schema: {
-      params: {
+fastify.get('/messages/:user_id', {
+  schema: {
+    params: {
+      type: 'object',
+      properties: {
         user_id: { type: 'string', pattern: '^[^@]+@[^@]+\\.[^@]+$' }
-      }
+      },
+      required: ['user_id']
     }
-  }, async (req, reply) => {
-    const { user_id } = req.params;
+  }
+}, async (req, reply) => {
+  const { user_id } = req.params;
 
-    try {
-      const { rows } = await dbPool.query(
-        `SELECT * FROM messages 
-         WHERE user_id = $1 
-         ORDER BY timestamp ASC`,
-        [user_id]
-      );
-      reply.send(rows);
-    } catch (error) {
-      reply.code(500).send({ error: 'Failed to fetch messages' });
-    }
-  });
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT * FROM messages 
+       WHERE user_id = $1 
+       ORDER BY timestamp ASC`,
+      [user_id]
+    );
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to fetch messages' });
+  }
+});
+
 }
