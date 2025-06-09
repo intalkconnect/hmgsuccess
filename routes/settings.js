@@ -8,7 +8,7 @@ fastify.get('/', async (req, reply) => {
     const { rows } = await dbPool.query(
       `SELECT 
          key,
-         value,
+         value
        FROM settings`
     );
 
