@@ -18,7 +18,7 @@ async function clientesRoutes(fastify, options) {
 
     try {
       const { rows } = await dbPool.query(
-        `SELECT name, phone, user_id, created_at, updated_at
+        `SELECT *
          FROM clientes WHERE user_id = $1 LIMIT 1`,
         [user_id]
       );
