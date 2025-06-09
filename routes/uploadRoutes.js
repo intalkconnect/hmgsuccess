@@ -1,26 +1,29 @@
-// routes/uploadRoutes.js
-import multer from 'fastify-multer'
-import { uploadToMinio } from '../services/uploadToMinio.js'
-
-/** Configura o parser de multipart para Fastify */
-const storage = multer.memoryStorage()
-const upload = multer({ storage })
+// routes/uploadPresignedRoutes.js
+import { minioClient } from '../services/minioClient.js'
+import { randomUUID } from 'crypto'
 
 export default async function uploadRoutes(fastify) {
-  fastify.register(multer.contentParser)
+  fastify.get('/presigned-url', async (req, reply) => {
+    const { filename, mimetype } = req.query
 
-  fastify.post('/upload', { preHandler: upload.single('file') }, async (req, reply) => {
-    const file = req.file
-    if (!file) {
-      return reply.code(400).send({ error: 'Arquivo ausente' })
+    if (!filename || !mimetype) {
+      return reply.code(400).send({ error: 'filename e mimetype são obrigatórios' })
     }
 
+    const objectName = `uploads/${Date.now()}-${filename}`
+    const bucketName = process.env.MINIO_BUCKET || 'uploads'
+
     try {
-      const fileUrl = await uploadToMinio(file.buffer, file.originalname, file.mimetype)
-      return reply.send({ url: fileUrl })
+      const uploadUrl = await minioClient.presignedPutObject(bucketName, objectName, 300) // 5 min
+      const publicUrl = `${process.env.MINIO_ENDPOINT}/${bucketName}/${objectName}`
+
+      return reply.send({
+        uploadUrl,
+        publicUrl,
+      })
     } catch (err) {
-      fastify.log.error('[uploadRoutes] Erro ao enviar para o MinIO:', err)
-      return reply.code(500).send({ error: 'Falha ao fazer upload do arquivo' })
+      fastify.log.error('[presigned-url] Erro ao gerar URL:', err)
+      return reply.code(500).send({ error: 'Erro ao gerar URL de upload' })
     }
   })
 }
