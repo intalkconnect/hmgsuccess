@@ -10,67 +10,75 @@ export default async function messageRoutes(fastify, opts) {
   // ENVIO DE MENSAGENS COMUNS
   // ───────────────────────────────────────────────
   fastify.post('/send', async (req, reply) => {
-    const { to, type, content, context } = req.body;
-    const userId = `${to}@w.msgcli.net`;
+       const { to, type, content, context } = req.body
+    // Garante o formato unificado de user_id
+    const userId = `${to}@w.msgcli.net`
 
     try {
-      const result = await sendWhatsappMessage({ to, type, content, context });
-      const whatsappMsgId = result.messages?.[0]?.id || null;
+      // Envia absolutamente TUDO via sendWhatsappMessage
+      const result = await sendWhatsappMessage({ to, type, content, context })
 
+      // Extrai message_id retornado (normalmente em result.messages[0].id)
+      const whatsappMsgId = result.messages?.[0]?.id || null
+
+      // Prepara objeto para inserir como outgoing
       const outgoingMsg = {
-        user_id: userId,
+        user_id:             userId,
         whatsapp_message_id: whatsappMsgId,
-        direction: 'outgoing',
-        type,
+        direction:           'outgoing',
+        type,                                  // ex: 'text', 'image', 'interactive', ...
         content: type === 'text' && typeof content === 'object' && content.body
-          ? content.body
-          : JSON.stringify(content),
-        timestamp: new Date().toISOString(),
-        flow_id: null,
-        reply_to: context?.message_id || null,
-        status: 'sent',
-        metadata: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+  ? content.body
+  : JSON.stringify(content),
+
+        timestamp:           new Date().toISOString(),
+        flow_id:             null,
+        reply_to:            context?.message_id || null,
+        status:              'sent',
+        metadata:            null,
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString(),
         channel: 'whatsapp'
-      };
-
-      const { rows } = await dbPool.query(`
-        INSERT INTO messages(
-          user_id, whatsapp_message_id, direction, type, content,
-          timestamp, flow_id, reply_to, status, metadata,
-          created_at, updated_at, channel
-        ) VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10,
-          $11, $12, $13
-        ) RETURNING *
-      `, Object.values(outgoingMsg));
-
-      const mensagemInserida = rows[0];
-
-      if (fastify.io) {
-        fastify.io.emit('new_message', mensagemInserida);
-        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
       }
 
-      return reply.code(200).send(result);
-    } catch (err) {
-      const errorData = err.response?.data || err.message;
-      fastify.log.error('[send] Erro ao enviar mensagem:', errorData);
+      // Grava no banco como outgoing
+      const { data: insertedData, error: insertError } = await supabase
+        .from('messages')
+        .insert([outgoingMsg])
+        .select()
 
+      if (insertError) {
+        fastify.log.error('[messageRoutes] Erro ao inserir outgoing:', insertError)
+        return reply.code(500).send({ error: 'Falha ao gravar mensagem no banco' })
+      }
+
+      const mensagemInserida = insertedData[0]
+
+      // Emite evento via Socket.IO para atualizar o front
+      if (fastify.io) {
+        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing) via Socket.IO:', mensagemInserida)
+        fastify.io.emit('new_message', mensagemInserida)
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida)
+      }
+
+      return reply.code(200).send(result)
+    } catch (err) {
+      const errorData = err.response?.data || err.message
+      fastify.log.error('[messageRoutes] Erro ao enviar outgoing WhatsApp:', errorData)
+
+      // Regra 24h (fora da janela)
       if (
         errorData?.error?.message?.includes('outside the allowed window') ||
         errorData?.error?.code === 131047
       ) {
         return reply.code(400).send({
           error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.'
-        });
+        })
       }
 
-      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
+      return reply.code(500).send({ error: 'Erro ao enviar mensagem' })
     }
-  });
+  })
 
   // ───────────────────────────────────────────────
   // ATUALIZAÇÃO DE STATUS DE LEITURA
