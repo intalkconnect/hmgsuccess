@@ -117,7 +117,7 @@ export default async function messageRoutes(fastify, opts) {
         SELECT 
           m.user_id,
           COUNT(*) AS unread_count
-        FROM mensagens m
+        FROM mensages m
         LEFT JOIN user_last_read r ON m.user_id = r.user_id
         WHERE m.created_at > COALESCE(r.last_read, '1970-01-01')
         GROUP BY m.user_id
