@@ -7,34 +7,46 @@ function isValidUserId(userId) {
 async function clientesRoutes(fastify, options) {
   // GET /clientes/:user_id
   fastify.get('/:user_id', async (req, reply) => {
-    const { user_id } = req.params;
+  const { user_id } = req.params;
 
-    if (!isValidUserId(user_id)) {
-      return reply.code(400).send({ 
-        error: 'Formato de user_id inválido. Use: usuario@dominio',
-        user_id
-      });
-    }
+  if (!isValidUserId(user_id)) {
+    return reply.code(400).send({ 
+      error: 'Formato de user_id inválido. Use: usuario@dominio',
+      user_id
+    });
+  }
 
-    try {
-      const { rows } = await dbPool.query(
-        `SELECT *
-         FROM clientes WHERE user_id = $1 LIMIT 1`,
-        [user_id]
-      );
+  try {
+    const { rows } = await dbPool.query(
+      `
+      SELECT 
+        c.*, 
+        t.ticket_number, 
+        t.fila, 
+        c.channel 
+      FROM clientes c
+      LEFT JOIN tickets t 
+        ON c.user_id = t.user_id AND t.status = 'open'
+      WHERE c.user_id = $1
+      ORDER BY t.created_at DESC
+      LIMIT 1
+      `,
+      [user_id]
+    );
 
-      return rows[0] 
-        ? reply.send(rows[0])
-        : reply.code(404).send({ error: 'Cliente não encontrado', user_id });
-    } catch (error) {
-      fastify.log.error(`Erro ao buscar cliente ${user_id}:`, error);
-      return reply.code(500).send({ 
-        error: 'Erro interno',
-        user_id,
-        ...(process.env.NODE_ENV === 'development' && { details: error.message })
-      });
-    }
-  });
+    return rows[0] 
+      ? reply.send(rows[0])
+      : reply.code(404).send({ error: 'Cliente não encontrado', user_id });
+  } catch (error) {
+    fastify.log.error(`Erro ao buscar cliente ${user_id}:`, error);
+    return reply.code(500).send({ 
+      error: 'Erro interno',
+      user_id,
+      ...(process.env.NODE_ENV === 'development' && { details: error.message })
+    });
+  }
+});
+
 
   // PUT /clientes/:user_id
   fastify.put('/:user_id', async (req, reply) => {
