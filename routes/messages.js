@@ -63,11 +63,11 @@ export default async function messageRoutes(fastify, opts) {
       const { rows } = await dbPool.query(insertQuery, values);
       const mensagemInserida = rows[0];
 
-      // if (fastify.io) {
-      //   fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida);
-      //   fastify.io.emit('new_message', mensagemInserida);
-      //   fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
-      // }
+      if (fastify.io) {
+        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida);
+        fastify.io.emit('new_message', mensagemInserida);
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
+      }
 
       return reply.code(200).send(result);
     } catch (err) {
@@ -236,10 +236,10 @@ export default async function messageRoutes(fastify, opts) {
       );
 
       const mensagemInserida = tplRows[0];
-      // if (fastify.io) {
-      //   fastify.io.emit('new_message', mensagemInserida);
-      //   fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
-      // }
+      if (fastify.io) {
+        fastify.io.emit('new_message', mensagemInserida);
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
+      }
 
       return reply.code(200).send(res.data);
     } catch (err) {
