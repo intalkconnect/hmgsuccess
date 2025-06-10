@@ -55,7 +55,6 @@ export async function distribuirTicket(userId, queueName) {
     if (!candidatos.length) {
       console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
       
-      // MODIFICADO: Usando a função create_ticket
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, null]
@@ -85,10 +84,10 @@ export async function distribuirTicket(userId, queueName) {
       mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
     });
 
-    // 6. Escolher atendente com menos carga
+    // 6. Escolher atendente com menos carga (usando email como chave)
     candidatos.sort((a, b) => {
-      const cargaA = mapaCargas[a.id] || 0;
-      const cargaB = mapaCargas[b.id] || 0;
+      const cargaA = mapaCargas[a.email] || 0;
+      const cargaB = mapaCargas[b.email] || 0;
       return cargaA - cargaB;
     });
 
@@ -100,37 +99,22 @@ export async function distribuirTicket(userId, queueName) {
     }
 
     // 7. Atribuir ou criar ticket
-    if (ticketAberto) {
-      await client.query(
-        'UPDATE tickets SET assigned_to = $1, updated_at = NOW() WHERE id = $2',
-        [escolhido, ticketAberto.id]
-      );
-      console.log(`[✅ Atualizado] Ticket atribuído a ${escolhido}`);
-      await client.query('COMMIT');
-      return { 
-        success: true, 
-        ticketId: ticketAberto.id, 
-        assignedTo: escolhido,
-        mode: 'auto-updated' 
-      };
-    } else {
-      // MODIFICADO: Usando a função create_ticket
-      const createTicketQuery = await client.query(
-        `SELECT create_ticket($1, $2, $3) as ticket_number`,
-        [userId, filaCliente, escolhido]
-      );
-      
-      const ticketNumber = createTicketQuery.rows[0].ticket_number;
-      console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
-      
-      await client.query('COMMIT');
-      return { 
-        success: true, 
-        ticketNumber, 
-        assignedTo: escolhido,
-        mode: 'auto-created' 
-      };
-    }
+    const createTicketQuery = await client.query(
+      `SELECT create_ticket($1, $2, $3) as ticket_number`,
+      [userId, filaCliente, escolhido]
+    );
+
+    const ticketNumber = createTicketQuery.rows[0].ticket_number;
+    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
+    
+    await client.query('COMMIT');
+    return { 
+      success: true, 
+      ticketNumber, 
+      assignedTo: escolhido,
+      mode: 'auto-created' 
+    };
+
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Erro na distribuição de ticket:', error);
