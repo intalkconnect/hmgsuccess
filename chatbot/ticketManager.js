@@ -45,7 +45,7 @@ export async function distribuirTicket(userId, queueName) {
 
     // 4. Buscar atendentes online da fila
     const atendentesQuery = await client.query(
-      'SELECT id, filas FROM atendentes WHERE status = $1',
+      'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
     );
     const candidatos = atendentesQuery.rows.filter(a => 
@@ -92,7 +92,7 @@ export async function distribuirTicket(userId, queueName) {
       return cargaA - cargaB;
     });
 
-    const escolhido = candidatos[0]?.id;
+    const escolhido = candidatos[0]?.email;
     if (!escolhido) {
       console.warn('⚠️ Não foi possível determinar atendente.');
       await client.query('COMMIT');
