@@ -139,7 +139,7 @@ fastify.get('/messages/unread-counts', async (req, reply) => {
         m.user_id,
         COUNT(*) AS unread_count
       FROM messages m
-      LEFT JOIN message_read_status r ON m.user_id = r.user_id
+      LEFT JOIN user_last_read r ON m.user_id = r.user_id
       WHERE 
         (m.direction = 'incoming' OR m.from_me = false)
         AND m.created_at > COALESCE(r.last_read, '1970-01-01')
