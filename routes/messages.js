@@ -132,7 +132,7 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // CONTAGEM DE MENSAGENS NÃO LIDAS (APENAS INCOMING)
   // ───────────────────────────────────────────────
-fastify.get('/messages/unread-counts', async (req, reply) => {
+fastify.get('/unread-counts', async (req, reply) => {
   try {
     const { rows } = await dbPool.query(`
       SELECT 
