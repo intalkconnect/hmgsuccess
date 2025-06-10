@@ -1,3 +1,4 @@
+// src/routes/messageRoutes.js
 import dotenv from 'dotenv';
 import { dbPool } from '../services/db.js';
 import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
@@ -10,27 +11,22 @@ export default async function messageRoutes(fastify, opts) {
   // ENVIO DE MENSAGENS COMUNS
   // ───────────────────────────────────────────────
   fastify.post('/send', async (req, reply) => {
-       const { to, type, content, context } = req.body
-    // Garante o formato unificado de user_id
-    const userId = `${to}@w.msgcli.net`
+    const { to, type, content, context } = req.body;
+    const userId = `${to}@w.msgcli.net`;
 
     try {
-      // Envia absolutamente TUDO via sendWhatsappMessage
-      const result = await sendWhatsappMessage({ to, type, content, context })
+      const result = await sendWhatsappMessage({ to, type, content, context });
+      const whatsappMsgId = result.messages?.[0]?.id || null;
 
-      // Extrai message_id retornado (normalmente em result.messages[0].id)
-      const whatsappMsgId = result.messages?.[0]?.id || null
-
-      // Prepara objeto para inserir como outgoing
       const outgoingMsg = {
         user_id:             userId,
         whatsapp_message_id: whatsappMsgId,
         direction:           'outgoing',
-        type,                                  // ex: 'text', 'image', 'interactive', ...
-        content: type === 'text' && typeof content === 'object' && content.body
-  ? content.body
-  : JSON.stringify(content),
-
+        type,
+        content:
+          type === 'text' && typeof content === 'object' && content.body
+            ? content.body
+            : JSON.stringify(content),
         timestamp:           new Date().toISOString(),
         flow_id:             null,
         reply_to:            context?.message_id || null,
@@ -38,64 +34,45 @@ export default async function messageRoutes(fastify, opts) {
         metadata:            null,
         created_at:          new Date().toISOString(),
         updated_at:          new Date().toISOString(),
-        channel: 'whatsapp'
-      }
+        channel:             'whatsapp',
+      };
 
-      // Grava no banco como outgoing
       const insertQuery = `
-  INSERT INTO messages (
-    user_id,
-    whatsapp_message_id,
-    direction,
-    type,
-    content,
-    timestamp,
-    flow_id,
-    reply_to,
-    status,
-    metadata,
-    created_at,
-    updated_at,
-    channel
-  ) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8, $9, $10,
-    $11, $12, $13
-  )
-  RETURNING *
-`;
+        INSERT INTO messages (
+          user_id,
+          whatsapp_message_id,
+          direction,
+          type,
+          content,
+          timestamp,
+          flow_id,
+          reply_to,
+          status,
+          metadata,
+          created_at,
+          updated_at,
+          channel
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10,
+          $11, $12, $13
+        )
+        RETURNING *;
+      `;
+      const values = Object.values(outgoingMsg);
+      const { rows } = await dbPool.query(insertQuery, values);
+      const mensagemInserida = rows[0];
 
-const values = [
-  outgoingMsg.user_id,
-  outgoingMsg.whatsapp_message_id,
-  outgoingMsg.direction,
-  outgoingMsg.type,
-  outgoingMsg.content,
-  outgoingMsg.timestamp,
-  outgoingMsg.flow_id,
-  outgoingMsg.reply_to,
-  outgoingMsg.status,
-  outgoingMsg.metadata,
-  outgoingMsg.created_at,
-  outgoingMsg.updated_at,
-  outgoingMsg.channel
-];
-
-const { rows } = await dbPool.query(insertQuery, values);
-const mensagemInserida = rows[0];
-
-
-      // Emite evento via Socket.IO para atualizar o front
       if (fastify.io) {
-        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing) via Socket.IO:', mensagemInserida)
-        fastify.io.emit('new_message', mensagemInserida)
-        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida)
+        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida);
+        fastify.io.emit('new_message', mensagemInserida);
+        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
       }
 
-      return reply.code(200).send(result)
+      return reply.code(200).send(result);
     } catch (err) {
-      const errorData = err.response?.data || err.message
-      fastify.log.error('[messageRoutes] Erro ao enviar outgoing WhatsApp:', errorData)
+      const errorData = err.response?.data || err.message;
+      fastify.log.error('[messageRoutes] Erro ao enviar outgoing WhatsApp:', errorData);
 
       // Regra 24h (fora da janela)
       if (
@@ -103,13 +80,12 @@ const mensagemInserida = rows[0];
         errorData?.error?.code === 131047
       ) {
         return reply.code(400).send({
-          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.'
-        })
+          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
+        });
       }
-
-      return reply.code(500).send({ error: 'Erro ao enviar mensagem' })
+      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
     }
-  })
+  });
 
   // ───────────────────────────────────────────────
   // ATUALIZAÇÃO DE STATUS DE LEITURA
@@ -123,14 +99,16 @@ const mensagemInserida = rows[0];
     }
 
     try {
-      const { rows } = await dbPool.query(`
+      const { rows } = await dbPool.query(
+        `
         INSERT INTO user_last_read (user_id, last_read)
         VALUES ($1, $2)
         ON CONFLICT (user_id)
         DO UPDATE SET last_read = EXCLUDED.last_read
-        RETURNING user_id, last_read
-      `, [user_id, last_read]);
-
+        RETURNING user_id, last_read;
+      `,
+        [user_id, last_read]
+      );
       return reply.send(rows[0]);
     } catch (error) {
       fastify.log.error(error);
@@ -141,7 +119,8 @@ const mensagemInserida = rows[0];
   fastify.get('/read-status', async (req, reply) => {
     try {
       const { rows } = await dbPool.query(`
-        SELECT user_id, last_read FROM user_last_read
+        SELECT user_id, last_read
+        FROM user_last_read;
       `);
       return reply.send(rows);
     } catch (error) {
@@ -150,6 +129,9 @@ const mensagemInserida = rows[0];
     }
   });
 
+  // ───────────────────────────────────────────────
+  // CONTAGEM DE MENSAGENS NÃO LIDAS (APENAS INCOMING)
+  // ───────────────────────────────────────────────
   fastify.get('/unread-counts', async (req, reply) => {
     try {
       const { rows } = await dbPool.query(`
@@ -158,8 +140,9 @@ const mensagemInserida = rows[0];
           COUNT(*) AS unread_count
         FROM messages m
         LEFT JOIN user_last_read r ON m.user_id = r.user_id
-        WHERE m.created_at > COALESCE(r.last_read, '1970-01-01')
-        GROUP BY m.user_id
+        WHERE m.direction = 'incoming'
+          AND m.created_at > COALESCE(r.last_read, '1970-01-01')
+        GROUP BY m.user_id;
       `);
       return reply.send(rows);
     } catch (error) {
@@ -169,26 +152,24 @@ const mensagemInserida = rows[0];
   });
 
   fastify.get('/conversations', async (req, reply) => {
-  try {
-    const { rows } = await dbPool.query(`
-      SELECT 
-        m.user_id,
-        MAX(m.timestamp) AS last_message_at,
-        c.name,
-        c.phone
-      FROM messages m
-      LEFT JOIN clientes c ON m.user_id = c.user_id
-      GROUP BY m.user_id, c.name, c.phone
-      ORDER BY last_message_at DESC
-    `);
-
-    return reply.send(rows); // [{ user_id, name, phone, last_message_at }]
-  } catch (error) {
-    fastify.log.error('Erro ao listar conversas:', error);
-    return reply.code(500).send({ error: 'Erro ao listar conversas' });
-  }
-});
-
+    try {
+      const { rows } = await dbPool.query(`
+        SELECT 
+          m.user_id,
+          MAX(m.timestamp) AS last_message_at,
+          c.name,
+          c.phone
+        FROM messages m
+        LEFT JOIN clientes c ON m.user_id = c.user_id
+        GROUP BY m.user_id, c.name, c.phone
+        ORDER BY last_message_at DESC;
+      `);
+      return reply.send(rows);
+    } catch (error) {
+      fastify.log.error('Erro ao listar conversas:', error);
+      return reply.code(500).send({ error: 'Erro ao listar conversas' });
+    }
+  });
 
   // ───────────────────────────────────────────────
   // ENVIO DE TEMPLATE
@@ -204,8 +185,8 @@ const mensagemInserida = rows[0];
       template: {
         name: templateName,
         language: { code: languageCode },
-        components: components || []
-      }
+        components: components || [],
+      },
     };
 
     try {
@@ -215,32 +196,32 @@ const mensagemInserida = rows[0];
         {
           headers: {
             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-          }
+            'Content-Type': 'application/json',
+          },
         }
       );
 
       const whatsappMsgId = res.data.messages?.[0]?.id || null;
-
       const outgoingMsg = {
-        user_id: userId,
+        user_id:             userId,
         whatsapp_message_id: whatsappMsgId,
-        direction: 'outgoing',
-        type: 'template',
-        content: templateName,
-        timestamp: new Date().toISOString(),
-        flow_id: null,
-        agent_id: null,
-        queue_id: null,
-        status: 'sent',
-        metadata: JSON.stringify({ languageCode, components }),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        channel: 'whatsapp'
+        direction:           'outgoing',
+        type:                'template',
+        content:             templateName,
+        timestamp:           new Date().toISOString(),
+        flow_id:             null,
+        agent_id:            null,
+        queue_id:            null,
+        status:              'sent',
+        metadata:            JSON.stringify({ languageCode, components }),
+        created_at:          new Date().toISOString(),
+        updated_at:          new Date().toISOString(),
+        channel:             'whatsapp',
       };
 
-      const { rows } = await dbPool.query(`
-        INSERT INTO messages(
+      const { rows: tplRows } = await dbPool.query(
+        `
+        INSERT INTO messages (
           user_id, whatsapp_message_id, direction, type, content,
           timestamp, flow_id, agent_id, queue_id, status,
           metadata, created_at, updated_at, channel
@@ -248,11 +229,13 @@ const mensagemInserida = rows[0];
           $1, $2, $3, $4, $5,
           $6, $7, $8, $9, $10,
           $11, $12, $13, $14
-        ) RETURNING *
-      `, Object.values(outgoingMsg));
+        )
+        RETURNING *;
+      `,
+        Object.values(outgoingMsg)
+      );
 
-      const mensagemInserida = rows[0];
-
+      const mensagemInserida = tplRows[0];
       if (fastify.io) {
         fastify.io.emit('new_message', mensagemInserida);
         fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
@@ -266,52 +249,33 @@ const mensagemInserida = rows[0];
   });
 
   // ───────────────────────────────────────────────
-  // LISTAGEM DE TEMPLATES
-  // ───────────────────────────────────────────────
-  fastify.get('/templates', async (req, reply) => {
-    try {
-      const res = await axios.get(
-        `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      return reply.code(200).send(res.data);
-    } catch (err) {
-      fastify.log.error('[templates] Erro ao listar templates:', err.response?.data || err.message);
-      return reply.code(500).send({ error: 'Erro ao listar templates' });
-    }
-  });
-
-  // ───────────────────────────────────────────────
   // LISTAR MENSAGENS POR USUÁRIO
   // ───────────────────────────────────────────────
-fastify.get('/:user_id', {
-  schema: {
-    params: {
-      type: 'object',
-      properties: {
-        user_id: { type: 'string', pattern: '^[^@]+@[^@]+\\.[^@]+$' }
+  fastify.get('/:user_id', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          user_id: { type: 'string', pattern: '^[^@]+@[^@]+\\.[^@]+$' },
+        },
+        required: ['user_id'],
       },
-      required: ['user_id']
+    },
+  }, async (req, reply) => {
+    const { user_id } = req.params;
+    try {
+      const { rows } = await dbPool.query(
+        `
+        SELECT *
+        FROM messages
+        WHERE user_id = $1
+        ORDER BY timestamp ASC;
+      `,
+        [user_id]
+      );
+      reply.send(rows);
+    } catch (error) {
+      reply.code(500).send({ error: 'Failed to fetch messages' });
     }
-  }
-}, async (req, reply) => {
-  const { user_id } = req.params;
-
-  try {
-    const { rows } = await dbPool.query(
-      `SELECT * FROM messages 
-       WHERE user_id = $1 
-       ORDER BY timestamp ASC`,
-      [user_id]
-    );
-    reply.send(rows);
-  } catch (error) {
-    reply.code(500).send({ error: 'Failed to fetch messages' });
-  }
-});
+  });
 }
