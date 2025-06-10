@@ -132,24 +132,26 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // CONTAGEM DE MENSAGENS NÃO LIDAS (APENAS INCOMING)
   // ───────────────────────────────────────────────
-  fastify.get('/unread-counts', async (req, reply) => {
-    try {
-      const { rows } = await dbPool.query(`
-        SELECT 
-          m.user_id,
-          COUNT(*) AS unread_count
-        FROM messages m
-        LEFT JOIN user_last_read r ON m.user_id = r.user_id
-        WHERE m.direction = 'incoming'
-          AND m.created_at > COALESCE(r.last_read, '1970-01-01')
-        GROUP BY m.user_id;
-      `);
-      return reply.send(rows);
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.code(500).send({ error: 'Erro ao contar mensagens não lidas' });
-    }
-  });
+fastify.get('/messages/unread-counts', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT 
+        m.user_id,
+        COUNT(*) AS unread_count
+      FROM messages m
+      LEFT JOIN message_read_status r ON m.user_id = r.user_id
+      WHERE 
+        (m.direction = 'incoming' OR m.from_me = false)
+        AND m.created_at > COALESCE(r.last_read, '1970-01-01')
+      GROUP BY m.user_id
+    `);
+    return reply.send(rows);
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Erro ao contar mensagens não lidas' });
+  }
+});
+
 
   fastify.get('/conversations', async (req, reply) => {
     try {
