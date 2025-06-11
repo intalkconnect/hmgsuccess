@@ -25,7 +25,7 @@ fastify.get('/:fila_nome', async (req, reply) => {
   try {
     const { rows } = await dbPool.query(
       `
-      SELECT id, nome, lastname, email, status
+      SELECT id, name, lastname, email, status
       FROM atendentes
       WHERE $1 = ANY(filas)         
         AND status = 'online'       
