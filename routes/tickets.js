@@ -95,6 +95,54 @@ async function ticketsRoutes(fastify, options) {
       });
     }
   });
+
+   // 🔁 Transferir atendimento (encerra atual, cria novo)
+  fastify.post('/transferir', async (req, reply) => {
+    const { from_user_id, to_fila, to_assigned_to, transferido_por } = req.body;
+
+    if (!from_user_id || !to_fila || !transferido_por) {
+      return reply.code(400).send({ error: 'Campos obrigatórios: from_user_id, to_fila, transferido_por' });
+    }
+
+    const client = await dbPool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Finaliza o ticket atual
+      const update = await client.query(
+        `UPDATE tickets
+         SET status = 'closed', updated_at = NOW()
+         WHERE user_id = $1 AND status = 'open'`,
+        [from_user_id]
+      );
+
+      if (update.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return reply.code(404).send({ error: 'Ticket atual não encontrado ou já encerrado' });
+      }
+
+      // Cria novo ticket com a nova fila e responsável (se houver)
+      const insert = await client.query(
+        `INSERT INTO tickets (user_id, fila, assigned_to, status, created_at, updated_at)
+         VALUES ($1, $2, $3, 'open', NOW(), NOW())
+         RETURNING user_id, fila, assigned_to, status`,
+        [from_user_id, to_fila, to_assigned_to || null]
+      );
+
+      await client.query('COMMIT');
+      return reply.send({
+        sucesso: true,
+        novo_ticket: insert.rows[0],
+      });
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Erro ao transferir atendimento' });
+    } finally {
+      client.release();
+    }
+  });
 }
 
 export default ticketsRoutes;
