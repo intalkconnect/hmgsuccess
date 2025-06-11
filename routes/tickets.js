@@ -20,8 +20,7 @@ async function ticketsRoutes(fastify, options) {
       const { rows } = await dbPool.query(
         `SELECT status, fila, assigned_to
          FROM tickets
-         WHERE user_id = $1
-         LIMIT 1`,
+         WHERE user_id = $1 AND status = 'open'`,
         [user_id]
       );
 
