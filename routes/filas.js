@@ -19,7 +19,7 @@ async function filaRoutes(fastify, options) {
   });
 
   // routes/filas.js  (adicione no mesmo arquivo onde já estão as demais rotas de fila)
-fastify.get('/:fila_nome', async (req, reply) => {
+fastify.get('/atendentes/:fila_nome', async (req, reply) => {
   const { fila_nome } = req.params;
 
   try {
