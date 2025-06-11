@@ -18,6 +18,30 @@ async function filaRoutes(fastify, options) {
     }
   });
 
+  // routes/filas.js  (adicione no mesmo arquivo onde já estão as demais rotas de fila)
+fastify.get('/:fila_nome', async (req, reply) => {
+  const { fila_nome } = req.params;
+
+  try {
+    const { rows } = await dbPool.query(
+      `
+      SELECT id, nome, lastname, email, status
+      FROM atendentes
+      WHERE $1 = ANY(filas)         
+        AND status = 'online'       
+      ORDER BY nome, lastname;
+      `,
+      [fila_nome]
+    );
+
+    return reply.send(rows);         // Ex.: [{ id, nome, email, ... }, ...]
+  } catch (err) {
+    fastify.log.error(err, 'Erro ao buscar atendentes da fila');
+    return reply.code(500).send({ error: 'Erro ao buscar atendentes' });
+  }
+});
+
+
   // 📥 Listar todas as filas
   fastify.get('/', async (_, reply) => {
     try {
