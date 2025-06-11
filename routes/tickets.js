@@ -154,7 +154,8 @@ async function ticketsRoutes(fastify, options) {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    fastify.log.error(err);
+    fastify.log.error({ err, body: req.body }, 'Erro em POST /tickets/transferir');
+
     return reply.code(500).send({ error: 'Erro ao transferir atendimento' });
   } finally {
     client.release();
