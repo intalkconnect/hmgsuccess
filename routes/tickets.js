@@ -122,7 +122,7 @@ async function ticketsRoutes(fastify, options) {
 
     // Busca o nome da fila com base no ID recebido
     const filaResult = await client.query(
-      `SELECT nome FROM filas WHERE id = $1`,
+      `SELECT nome FROM filas WHERE nome = $1`,
       [to_fila]
     );
 
