@@ -27,19 +27,27 @@ fastify.get('/atendentes/:fila_nome', async (req, reply) => {
       `
       SELECT id, name, lastname, email, status
       FROM atendentes
-      WHERE $1 = ANY(filas)         
-        AND status = 'online'       
+      WHERE $1 = ANY(filas)
+        AND status = 'online'
       ORDER BY name, lastname;
       `,
       [fila_nome]
     );
 
-    return reply.send(rows);         // Ex.: [{ id, nome, email, ... }, ...]
+    if (rows.length === 0) {
+      return reply.send({
+        message: 'Nenhum atendente online ou cadastrado para esta fila.',
+        atendentes: []
+      });
+    }
+
+    return reply.send({ atendentes: rows });
   } catch (err) {
     fastify.log.error(err, 'Erro ao buscar atendentes da fila');
     return reply.code(500).send({ error: 'Erro ao buscar atendentes' });
   }
 });
+
 
 
   // 📥 Listar todas as filas
