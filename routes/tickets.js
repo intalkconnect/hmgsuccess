@@ -120,10 +120,23 @@ async function ticketsRoutes(fastify, options) {
       return reply.code(404).send({ error: 'Ticket atual não encontrado ou já encerrado' });
     }
 
-    // Cria novo ticket usando a função do banco (que gera ticket_number automaticamente)
+    // Busca o nome da fila com base no ID recebido
+    const filaResult = await client.query(
+      `SELECT nome FROM filas WHERE id = $1`,
+      [to_fila]
+    );
+
+    if (filaResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return reply.code(400).send({ error: 'Fila destino não encontrada' });
+    }
+
+    const nomeDaFila = filaResult.rows[0].nome;
+
+    // Cria novo ticket usando a função que gera ticket_number automaticamente
     const result = await client.query(
       `SELECT create_ticket($1, $2, $3) AS ticket_number`,
-      [from_user_id, to_fila, to_assigned_to || null]
+      [from_user_id, nomeDaFila, to_assigned_to || null]
     );
 
     const novoTicket = await client.query(
@@ -147,6 +160,7 @@ async function ticketsRoutes(fastify, options) {
     client.release();
   }
 });
+
 
 }
 
