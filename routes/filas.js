@@ -29,7 +29,7 @@ fastify.get('/:fila_nome', async (req, reply) => {
       FROM atendentes
       WHERE $1 = ANY(filas)         
         AND status = 'online'       
-      ORDER BY nome, lastname;
+      ORDER BY name, lastname;
       `,
       [fila_nome]
     );
