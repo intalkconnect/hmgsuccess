@@ -12,6 +12,7 @@ import clientesRoutes from './routes/clientes.js';
 import settingsRoutes from './routes/settings.js';
 import ticketsRoutes from './routes/tickets.js';
 import chatsRoutes from './routes/chats.js';
+import filaRoutes from './routes/filas.js';
 
 import { initDB } from './services/db.js'
 
@@ -73,6 +74,7 @@ fastify.register(uploadRoutes, { prefix: '/api/v1/bucket' })
 fastify.register(clientesRoutes, { prefix: '/api/v1/clientes' })
 fastify.register(settingsRoutes, { prefix: '/api/v1/settings' })
 fastify.register(ticketsRoutes, { prefix: '/api/v1/tickets' })
+fastify.register(filaRoutes, { prefix: '/api/v1/filas' })
 fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
