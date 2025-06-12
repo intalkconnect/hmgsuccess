@@ -50,7 +50,7 @@ async function start() {
 io.on('connection', (socket) => {
   fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
 
-  // ✅ Salvar o e-mail no objeto socket
+  // ✅ Captura e-mail via query e salva no socket
   const email = socket.handshake?.query?.email;
   if (email) {
     socket.email = email;
@@ -73,7 +73,6 @@ io.on('connection', (socket) => {
   socket.on('disconnect', async (reason) => {
     fastify.log.info(`[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`);
 
-    // ✅ Usa o email salvo no socket
     if (socket.email) {
       try {
         await fastify.pg.query(
@@ -89,9 +88,6 @@ io.on('connection', (socket) => {
     }
   });
 });
-
-
-
 
 fastify.log.info('[start] Registrando rotas...')
 fastify.register(webhookRoutes, { prefix: '/webhook' }) // permanece
