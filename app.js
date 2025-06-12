@@ -50,11 +50,13 @@ async function start() {
 io.on('connection', (socket) => {
   fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
 
-  // Salva o email no próprio socket
-  const email = socket.handshake.query?.email;
+  // ✅ Salvar o e-mail no objeto socket
+  const email = socket.handshake?.query?.email;
   if (email) {
     socket.email = email;
     fastify.log.info(`[Socket.IO] E-mail associado ao socket ${socket.id}: ${email}`);
+  } else {
+    fastify.log.warn(`[Socket.IO] Nenhum e-mail fornecido para o socket ${socket.id}`);
   }
 
   socket.on('join_room', (userId) => {
@@ -71,22 +73,23 @@ io.on('connection', (socket) => {
   socket.on('disconnect', async (reason) => {
     fastify.log.info(`[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`);
 
-    // Agora podemos usar socket.email com segurança
+    // ✅ Usa o email salvo no socket
     if (socket.email) {
       try {
         await fastify.pg.query(
           'UPDATE atendentes SET status = $1 WHERE email = $2',
           ['offline', socket.email]
         );
-        fastify.log.info(`[Socket.IO] Marcado como offline: ${socket.email}`);
+        fastify.log.info(`[Socket.IO] Atendente marcado como offline: ${socket.email}`);
       } catch (err) {
         fastify.log.error(err, `[Socket.IO] Erro ao marcar ${socket.email} como offline`);
       }
     } else {
-      fastify.log.warn('[Socket.IO] Não foi possível identificar o e-mail no disconnect');
+      fastify.log.warn('[Socket.IO] socket.email indefinido no disconnect');
     }
   });
 });
+
 
 
 
