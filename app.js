@@ -31,7 +31,7 @@ async function buildServer() {
   return fastify;
 }
 
-async function start() {async function start() {
+async function start() {
   const fastify = await buildServer();
   const io = new IOServer(fastify.server, { cors: { origin: '*' } });
   fastify.decorate('io', io);
