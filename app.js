@@ -47,40 +47,15 @@ async function start() {
 
   fastify.decorate('io', io)
 
-io.on('connection', async (socket) => {
-  const email = socket.handshake.query.email;
+io.on('connection', (socket) => {
+  fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
 
-  fastify.log.info(`[Socket.IO] Conectado: ${socket.id} (${email || 'sem email'})`);
-
-  // Se tiver e-mail, atualiza status para online
+  // Salva o email no próprio socket
+  const email = socket.handshake.query?.email;
   if (email) {
-    try {
-      await fastify.pg.query(
-        `UPDATE atendentes SET status = 'online', updated_at = NOW() WHERE email = $1`,
-        [email]
-      );
-      fastify.log.info(`[Socket.IO] Atendente ${email} marcado como ONLINE`);
-    } catch (err) {
-      fastify.log.error(err, `[Socket.IO] Erro ao marcar ${email} como online`);
-    }
+    socket.email = email;
+    fastify.log.info(`[Socket.IO] E-mail associado ao socket ${socket.id}: ${email}`);
   }
-
-  socket.on('disconnect', async (reason) => {
-    fastify.log.info(`[Socket.IO] Desconectado: ${socket.id} (${email}) - ${reason}`);
-    
-    // Marca offline no banco
-    if (email) {
-      try {
-        await fastify.pg.query(
-          `UPDATE atendentes SET status = 'offline', updated_at = NOW() WHERE email = $1`,
-          [email]
-        );
-        fastify.log.info(`[Socket.IO] Atendente ${email} marcado como OFFLINE`);
-      } catch (err) {
-        fastify.log.error(err, `[Socket.IO] Erro ao marcar ${email} como offline`);
-      }
-    }
-  });
 
   socket.on('join_room', (userId) => {
     const normalizedId = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
@@ -92,7 +67,27 @@ io.on('connection', async (socket) => {
     socket.leave(`chat-${userId}`);
     fastify.log.info(`[Socket.IO] Socket ${socket.id} saiu da sala chat-${userId}`);
   });
+
+  socket.on('disconnect', async (reason) => {
+    fastify.log.info(`[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`);
+
+    // Agora podemos usar socket.email com segurança
+    if (socket.email) {
+      try {
+        await fastify.pg.query(
+          'UPDATE atendentes SET status = $1 WHERE email = $2',
+          ['offline', socket.email]
+        );
+        fastify.log.info(`[Socket.IO] Marcado como offline: ${socket.email}`);
+      } catch (err) {
+        fastify.log.error(err, `[Socket.IO] Erro ao marcar ${socket.email} como offline`);
+      }
+    } else {
+      fastify.log.warn('[Socket.IO] Não foi possível identificar o e-mail no disconnect');
+    }
+  });
 });
+
 
 
 fastify.log.info('[start] Registrando rotas...')
