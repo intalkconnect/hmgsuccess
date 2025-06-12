@@ -4,8 +4,32 @@ import multipart from '@fastify/multipart';
 import dotenv from 'dotenv';
 import { Server as IOServer } from 'socket.io';
 
-// ... (other imports remain the same) ...
+import webhookRoutes from './routes/webhook.js';
+import messageRoutes from './routes/messages.js';
+import flowRoutes from './routes/flow.js';
+import uploadRoutes from './routes/uploadRoutes.js';
+import clientesRoutes from './routes/clientes.js';
+import settingsRoutes from './routes/settings.js';
+import ticketsRoutes from './routes/tickets.js';
+import chatsRoutes from './routes/chats.js';
+import filaRoutes from './routes/filas.js';
+import atendentesRoutes from './routes/atendentes.js';
+import { initDB } from './services/db.js';
 
+dotenv.config();
+
+async function buildServer() {
+  const fastify = Fastify({ logger: true });
+
+  await fastify.register(cors, {
+    origin: '*',
+    methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
+  });
+  await fastify.register(multipart);
+  await initDB();
+  fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
+  return fastify;
+}
 async function start() {
   const fastify = await buildServer();
   const io = new IOServer(fastify.server, { 
