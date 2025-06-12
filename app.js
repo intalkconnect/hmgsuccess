@@ -31,10 +31,26 @@ async function buildServer() {
   return fastify;
 }
 
-async function start() {
+async function start() {async function start() {
   const fastify = await buildServer();
   const io = new IOServer(fastify.server, { cors: { origin: '*' } });
   fastify.decorate('io', io);
+
+  // Mapa para controlar status de usuários
+  const userStatusMap = new Map();
+
+  // Função auxiliar para atualizar status
+  async function updateAtendenteStatus(email, status) {
+    try {
+      await fastify.pg.query(
+        'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
+        [status, email]
+      );
+      fastify.log.info(`[Status] Atendente ${email} marcado como ${status}`);
+    } catch (err) {
+      fastify.log.error(err, `[Status] Erro ao atualizar status para ${email}`);
+    }
+  }
 
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
@@ -44,17 +60,42 @@ async function start() {
       return;
     }
 
-    // Evento para marcar online
-    socket.on('atendente_online', async () => {
-      try {
-        await fastify.pg.query(
-          'UPDATE atendentes SET status = $1 WHERE email = $2',
-          ['online', email]
-        );
-        fastify.log.info(`[Socket.IO] Atendente online: ${email}`);
-      } catch (err) {
-        fastify.log.error(err, '[Socket.IO] Erro ao marcar atendente online');
+    // Armazena a conexão
+    userStatusMap.set(email, {
+      socketId: socket.id,
+      status: 'online',
+      lastActivity: new Date()
+    });
+
+    // Atualiza status no banco
+    updateAtendenteStatus(email, 'online');
+
+    // Heartbeat para verificar conexão ativa
+    socket.on('heartbeat', (userEmail) => {
+      const userStatus = userStatusMap.get(userEmail);
+      if (userStatus) {
+        userStatus.lastActivity = new Date();
+        userStatusMap.set(userEmail, userStatus);
       }
+    });
+
+    // Eventos de atividade/inatividade
+    socket.on('user_active', async () => {
+      userStatusMap.set(email, {
+        ...userStatusMap.get(email),
+        status: 'online',
+        lastActivity: new Date()
+      });
+      await updateAtendenteStatus(email, 'online');
+    });
+
+    socket.on('user_inactive', async () => {
+      userStatusMap.set(email, {
+        ...userStatusMap.get(email),
+        status: 'away',
+        lastActivity: new Date()
+      });
+      await updateAtendenteStatus(email, 'away');
     });
 
     // Join nas salas de chat
@@ -71,17 +112,33 @@ async function start() {
 
     socket.on('disconnect', async (reason) => {
       fastify.log.info(`[Socket.IO] Desconectado ${socket.id} (razão=${reason})`);
-      try {
-        await fastify.pg.query(
-          'UPDATE atendentes SET status = $1 WHERE email = $2',
-          ['offline', email]
-        );
-        fastify.log.info(`[Socket.IO] Atendente offline: ${email}`);
-      } catch (err) {
-        fastify.log.error(err, '[Socket.IO] Erro ao marcar offline');
-      }
+      userStatusMap.delete(email);
+      await updateAtendenteStatus(email, 'offline');
+    });
+
+    // Eventos específicos do atendente
+    socket.on('atendente_online', async () => {
+      await updateAtendenteStatus(email, 'online');
+    });
+
+    socket.on('atendente_offline', async () => {
+      await updateAtendenteStatus(email, 'offline');
     });
   });
+
+  // Verificação periódica de inatividade
+  setInterval(() => {
+    const now = new Date();
+    userStatusMap.forEach(async (status, email) => {
+      if ((now - status.lastActivity) > 45000) { // 45 segundos sem atividade
+        userStatusMap.set(email, {
+          ...status,
+          status: 'offline'
+        });
+        await updateAtendenteStatus(email, 'offline');
+      }
+    });
+  }, 60000); // Verifica a cada 1 minuto
 
   fastify.register(webhookRoutes, { prefix: '/webhook' });
   fastify.register(messageRoutes, { prefix: '/api/v1/messages' });
