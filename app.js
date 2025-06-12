@@ -60,43 +60,8 @@ async function start() {
       return;
     }
 
-    // Armazena a conexão
-    userStatusMap.set(email, {
-      socketId: socket.id,
-      status: 'online',
-      lastActivity: new Date()
-    });
-
     // Atualiza status no banco
     updateAtendenteStatus(email, 'online');
-
-    // Heartbeat para verificar conexão ativa
-    socket.on('heartbeat', (userEmail) => {
-      const userStatus = userStatusMap.get(userEmail);
-      if (userStatus) {
-        userStatus.lastActivity = new Date();
-        userStatusMap.set(userEmail, userStatus);
-      }
-    });
-
-    // Eventos de atividade/inatividade
-    socket.on('user_active', async () => {
-      userStatusMap.set(email, {
-        ...userStatusMap.get(email),
-        status: 'online',
-        lastActivity: new Date()
-      });
-      await updateAtendenteStatus(email, 'online');
-    });
-
-    socket.on('user_inactive', async () => {
-      userStatusMap.set(email, {
-        ...userStatusMap.get(email),
-        status: 'away',
-        lastActivity: new Date()
-      });
-      await updateAtendenteStatus(email, 'away');
-    });
 
     // Join nas salas de chat
     socket.on('join_room', (userId) => {
@@ -112,7 +77,6 @@ async function start() {
 
     socket.on('disconnect', async (reason) => {
       fastify.log.info(`[Socket.IO] Desconectado ${socket.id} (razão=${reason})`);
-      userStatusMap.delete(email);
       await updateAtendenteStatus(email, 'offline');
     });
 
@@ -125,20 +89,6 @@ async function start() {
       await updateAtendenteStatus(email, 'offline');
     });
   });
-
-  // Verificação periódica de inatividade
-  setInterval(() => {
-    const now = new Date();
-    userStatusMap.forEach(async (status, email) => {
-      if ((now - status.lastActivity) > 45000) { // 45 segundos sem atividade
-        userStatusMap.set(email, {
-          ...status,
-          status: 'offline'
-        });
-        await updateAtendenteStatus(email, 'offline');
-      }
-    });
-  }, 60000); // Verifica a cada 1 minuto
 
   fastify.register(webhookRoutes, { prefix: '/webhook' });
   fastify.register(messageRoutes, { prefix: '/api/v1/messages' });
