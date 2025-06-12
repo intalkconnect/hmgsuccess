@@ -47,26 +47,55 @@ async function start() {
 
   fastify.decorate('io', io)
 
-  io.on('connection', (socket) => {
-    fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`)
+io.on('connection', async (socket) => {
+  const email = socket.handshake.query.email;
 
-    socket.on('join_room', (userId) => {
-      const normalizedId = userId.includes('@') ? userId : `${userId}@w.msgcli.net`
-      socket.join(`chat-${normalizedId}`)
-      fastify.log.info(`[Socket.IO] Socket ${socket.id} entrou na sala chat-${normalizedId}`)
-    })
+  fastify.log.info(`[Socket.IO] Conectado: ${socket.id} (${email || 'sem email'})`);
 
-    socket.on('leave_room', (userId) => {
-      socket.leave(`chat-${userId}`)
-      fastify.log.info(`[Socket.IO] Socket ${socket.id} saiu da sala chat-${userId}`)
-    })
+  // Se tiver e-mail, atualiza status para online
+  if (email) {
+    try {
+      await fastify.pg.query(
+        `UPDATE atendentes SET status = 'online', updated_at = NOW() WHERE email = $1`,
+        [email]
+      );
+      fastify.log.info(`[Socket.IO] Atendente ${email} marcado como ONLINE`);
+    } catch (err) {
+      fastify.log.error(err, `[Socket.IO] Erro ao marcar ${email} como online`);
+    }
+  }
 
-    socket.on('disconnect', (reason) => {
-      fastify.log.info(`[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`)
-    })
-  })
+  socket.on('disconnect', async (reason) => {
+    fastify.log.info(`[Socket.IO] Desconectado: ${socket.id} (${email}) - ${reason}`);
+    
+    // Marca offline no banco
+    if (email) {
+      try {
+        await fastify.pg.query(
+          `UPDATE atendentes SET status = 'offline', updated_at = NOW() WHERE email = $1`,
+          [email]
+        );
+        fastify.log.info(`[Socket.IO] Atendente ${email} marcado como OFFLINE`);
+      } catch (err) {
+        fastify.log.error(err, `[Socket.IO] Erro ao marcar ${email} como offline`);
+      }
+    }
+  });
 
-  fastify.log.info('[start] Registrando rotas...')
+  socket.on('join_room', (userId) => {
+    const normalizedId = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
+    socket.join(`chat-${normalizedId}`);
+    fastify.log.info(`[Socket.IO] Socket ${socket.id} entrou na sala chat-${normalizedId}`);
+  });
+
+  socket.on('leave_room', (userId) => {
+    socket.leave(`chat-${userId}`);
+    fastify.log.info(`[Socket.IO] Socket ${socket.id} saiu da sala chat-${userId}`);
+  });
+});
+
+
+fastify.log.info('[start] Registrando rotas...')
 fastify.register(webhookRoutes, { prefix: '/webhook' }) // permanece
 fastify.register(messageRoutes, { prefix: '/api/v1/messages' })
 fastify.register(chatsRoutes, { prefix: '/api/v1/chats' })
