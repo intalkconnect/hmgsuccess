@@ -63,6 +63,7 @@ async function start() {
     fastify.log.info(`[Socket.IO] Conectado: ${socket.id}`);
 
     // Tenta obter email de auth ou query
+    console.log(socket);
     const { auth, query } = socket.handshake;
     const email = auth?.email || query?.email;
     if (!email) {
