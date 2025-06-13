@@ -7,14 +7,14 @@ import { Server as IOServer } from 'socket.io';
 
 import webhookRoutes from './routes/webhook.js';
 import messageRoutes from './routes/messages.js';
-import flowRoutes from './routes/flow.js';nimport uploadRoutes from './routes/uploadRoutes.js';
+import flowRoutes from './routes/flow.js';
+import uploadRoutes from './routes/uploadRoutes.js';
 import clientesRoutes from './routes/clientes.js';
 import settingsRoutes from './routes/settings.js';
 import ticketsRoutes from './routes/tickets.js';
 import chatsRoutes from './routes/chats.js';
 import filaRoutes from './routes/filas.js';
 import atendentesRoutes from './routes/atendentes.js';
-// se tiver initDB para migrações ou seed, mantenha, caso contrário remova
 import { initDB } from './services/db.js';
 
 dotenv.config();
@@ -39,7 +39,7 @@ async function buildServer() {
     fastify.log.info('[initDB] Migrações/Seed finalizados.');
   }
 
-  fastify.log.info('[initDB] Plugin fastify-postgres registrado.');
+  fastify.log.info('[build] fastify-postgres registrado.');
   return fastify;
 }
 
@@ -54,7 +54,6 @@ async function start() {
   // Função auxiliar para atualizar status
   async function updateAtendenteStatus(email, status) {
     try {
-      // usa fastify.pg para executar query
       await fastify.pg.query(
         'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
         [status, email]
@@ -68,7 +67,6 @@ async function start() {
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
 
-    // Tenta ler email de auth ou query (fallback)
     const { auth, query } = socket.handshake;
     const email = auth?.email || query?.email;
     if (!email) {
