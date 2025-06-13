@@ -60,7 +60,10 @@ async function start() {
 
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Conectado: ${socket.id}`);
-    const email = socket.handshake.auth?.email;
+
+    // Tenta obter email de auth ou query
+    const { auth, query } = socket.handshake;
+    const email = auth?.email || query?.email;
     if (!email) {
       fastify.log.warn(`[Socket.IO] Falta email no handshake: ${socket.id}`);
       return socket.disconnect(true);
