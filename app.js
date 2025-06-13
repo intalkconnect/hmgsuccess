@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import fastifyPostgres from '@fastify/postgres';
 import dotenv from 'dotenv';
 import { Server as IOServer } from 'socket.io';
 
@@ -19,36 +18,31 @@ import { initDB } from './services/db.js';
 
 dotenv.config();
 
+// Construção do servidor Fastify
 async function buildServer() {
   const fastify = Fastify({ logger: true });
 
-  // Conexão com PostgreSQL via plugin
-  await fastify.register(fastifyPostgres, {
-    connectionString: process.env.PG_CONNECTION_STRING || process.env.DATABASE_URL,
-  });
-
+  // CORS e multipart
   await fastify.register(cors, {
     origin: '*',
     methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
   });
   await fastify.register(multipart);
 
-  // Migrações/Seed se existir
-  if (initDB) {
-    await initDB();
-    fastify.log.info('[initDB] Migrações e seeds concluídos.');
-  }
+  // Inicializa banco via initDB (que deve expor fastify.pg)
+  await initDB(fastify);
+  fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
 
-  fastify.log.info('[build] Servidor configurado.');
   return fastify;
 }
 
+// Inicie o servidor e socket.io
 async function start() {
   const fastify = await buildServer();
   const io = new IOServer(fastify.server, { cors: { origin: '*' } });
   fastify.decorate('io', io);
 
-  // Mapa de presença
+  // Mapa para presença de atendentes
   const userStatusMap = new Map();
 
   // Atualiza status no banco
@@ -58,18 +52,17 @@ async function start() {
         'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
         [status, email]
       );
-      fastify.log.info(`[Status] ${email} → ${status}`);
+      fastify.log.info(`[Status] Atendente ${email} marcado como ${status}`);
     } catch (err) {
-      fastify.log.error(err, `[Status] Erro ao atualizar ${email}`);
+      fastify.log.error(err, `[Status] Erro ao atualizar status para ${email}`);
     }
   }
 
   io.on('connection', (socket) => {
-    fastify.log.info(`[Socket.IO] Conectado: ${socket.id}`);
-    const { auth } = socket.handshake;
-    const email = auth?.email;
+    fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
+    const email = socket.handshake.auth?.email;
     if (!email) {
-      fastify.log.warn(`[Socket.IO] Falta e-mail no handshake: ${socket.id}`);
+      fastify.log.warn(`[Socket.IO] Sem e-mail no handshake: ${socket.id}`);
       return socket.disconnect(true);
     }
 
@@ -77,13 +70,13 @@ async function start() {
     userStatusMap.set(email, { lastActivity: Date.now() });
     updateAtendenteStatus(email, 'online');
 
-    // Heartbeat: mantém lastActivity atualizado
+    // Heartbeat: atualiza lastActivity
     socket.on('heartbeat', () => {
       const entry = userStatusMap.get(email);
       if (entry) entry.lastActivity = Date.now();
     });
 
-    // Eventos manuais de presença
+    // Atividade manual
     socket.on('user_active', async () => {
       userStatusMap.set(email, { lastActivity: Date.now() });
       await updateAtendenteStatus(email, 'online');
@@ -93,7 +86,7 @@ async function start() {
       await updateAtendenteStatus(email, 'away');
     });
 
-    // Join/Leave de salas
+    // Join e leave de salas de chat
     socket.on('join_room', (userId) => {
       const room = `chat-${userId.includes('@') ? userId : `${userId}@w.msgcli.net`}`;
       socket.join(room);
@@ -105,7 +98,7 @@ async function start() {
       fastify.log.info(`[Socket.IO] ${socket.id} saiu de ${room}`);
     });
 
-    // Desconexão explícita
+    // Desconexão explícita: marca offline
     socket.on('disconnect', async (reason) => {
       fastify.log.info(`[Socket.IO] Desconectado (${reason}): ${socket.id}`);
       userStatusMap.delete(email);
@@ -124,7 +117,7 @@ async function start() {
     });
   }, 60000);
 
-  // Registra rotas REST
+  // Roteamento REST
   fastify.register(webhookRoutes,   { prefix: '/webhook' });
   fastify.register(messageRoutes,   { prefix: '/api/v1/messages' });
   fastify.register(chatsRoutes,     { prefix: '/api/v1/chats' });
@@ -134,7 +127,7 @@ async function start() {
   fastify.register(settingsRoutes,  { prefix: '/api/v1/settings' });
   fastify.register(ticketsRoutes,   { prefix: '/api/v1/tickets' });
   fastify.register(filaRoutes,      { prefix: '/api/v1/filas' });
-  fastify.register(atendentesRoutes, { prefix: '/api/v1/atendentes' });
+  fastify.register(atendentesRoutes,{ prefix: '/api/v1/atendentes' });
 
   const PORT = process.env.PORT || 3000;
   await fastify.listen({ port: PORT, host: '0.0.0.0' });
