@@ -29,7 +29,7 @@ async function buildServer() {
   });
   await fastify.register(multipart);
 
-  // Inicializa conexão com o banco (deve expor fastify.pg)
+  // Inicializa conexão com o banco, passando o fastify para expor fastify.pg
   await initDB(fastify);
   fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
 
@@ -48,6 +48,7 @@ async function start() {
   // Atualiza status no banco
   async function updateAtendenteStatus(email, status) {
     try {
+      // fastify.pg deve agora existir
       await fastify.pg.query(
         'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
         [status, email]
