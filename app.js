@@ -18,31 +18,31 @@ import { initDB } from './services/db.js';
 
 dotenv.config();
 
-// Construção do servidor Fastify
+// Configuração inicial do servidor
 async function buildServer() {
   const fastify = Fastify({ logger: true });
 
   // CORS e multipart
   await fastify.register(cors, {
     origin: '*',
-    methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   });
   await fastify.register(multipart);
 
-  // Inicializa banco via initDB (que deve expor fastify.pg)
+  // Inicializa conexão com o banco (deve expor fastify.pg)
   await initDB(fastify);
   fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
 
   return fastify;
 }
 
-// Inicie o servidor e socket.io
+// Inicia servidor e Socket.IO
 async function start() {
   const fastify = await buildServer();
   const io = new IOServer(fastify.server, { cors: { origin: '*' } });
   fastify.decorate('io', io);
 
-  // Mapa para presença de atendentes
+  // Map para acompanhar última atividade de cada email
   const userStatusMap = new Map();
 
   // Atualiza status no banco
@@ -52,17 +52,17 @@ async function start() {
         'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
         [status, email]
       );
-      fastify.log.info(`[Status] Atendente ${email} marcado como ${status}`);
+      fastify.log.info(`[Status] Atendente ${email} → ${status}`);
     } catch (err) {
-      fastify.log.error(err, `[Status] Erro ao atualizar status para ${email}`);
+      fastify.log.error(err, `[Status] Erro ao atualizar ${email}`);
     }
   }
 
   io.on('connection', (socket) => {
-    fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
+    fastify.log.info(`[Socket.IO] Conectado: ${socket.id}`);
     const email = socket.handshake.auth?.email;
     if (!email) {
-      fastify.log.warn(`[Socket.IO] Sem e-mail no handshake: ${socket.id}`);
+      fastify.log.warn(`[Socket.IO] Falta email no handshake: ${socket.id}`);
       return socket.disconnect(true);
     }
 
@@ -70,13 +70,13 @@ async function start() {
     userStatusMap.set(email, { lastActivity: Date.now() });
     updateAtendenteStatus(email, 'online');
 
-    // Heartbeat: atualiza lastActivity
+    // Heartbeat para manter lastActivity atualizado
     socket.on('heartbeat', () => {
       const entry = userStatusMap.get(email);
       if (entry) entry.lastActivity = Date.now();
     });
 
-    // Atividade manual
+    // Presença manual
     socket.on('user_active', async () => {
       userStatusMap.set(email, { lastActivity: Date.now() });
       await updateAtendenteStatus(email, 'online');
@@ -86,19 +86,23 @@ async function start() {
       await updateAtendenteStatus(email, 'away');
     });
 
-    // Join e leave de salas de chat
+    // Entrar em salas
     socket.on('join_room', (userId) => {
-      const room = `chat-${userId.includes('@') ? userId : `${userId}@w.msgcli.net`}`;
+      const normalized = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
+      const room = `chat-${normalized}`;
       socket.join(room);
       fastify.log.info(`[Socket.IO] ${socket.id} entrou em ${room}`);
     });
+
+    // Sair de salas
     socket.on('leave_room', (userId) => {
-      const room = `chat-${userId.includes('@') ? userId : `${userId}@w.msgcli.net`}`;
+      const normalized = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
+      const room = `chat-${normalized}`;
       socket.leave(room);
       fastify.log.info(`[Socket.IO] ${socket.id} saiu de ${room}`);
     });
 
-    // Desconexão explícita: marca offline
+    // Desconexão explícita
     socket.on('disconnect', async (reason) => {
       fastify.log.info(`[Socket.IO] Desconectado (${reason}): ${socket.id}`);
       userStatusMap.delete(email);
@@ -117,7 +121,7 @@ async function start() {
     });
   }, 60000);
 
-  // Roteamento REST
+  // Rotas REST
   fastify.register(webhookRoutes,   { prefix: '/webhook' });
   fastify.register(messageRoutes,   { prefix: '/api/v1/messages' });
   fastify.register(chatsRoutes,     { prefix: '/api/v1/chats' });
@@ -130,8 +134,13 @@ async function start() {
   fastify.register(atendentesRoutes,{ prefix: '/api/v1/atendentes' });
 
   const PORT = process.env.PORT || 3000;
-  await fastify.listen({ port: PORT, host: '0.0.0.0' });
-  fastify.log.info(`[start] Servidor rodando em :${PORT}`);
+  try {
+    await fastify.listen({ port: PORT, host: '0.0.0.0' });
+    fastify.log.info(`[start] Servidor rodando em http://0.0.0.0:${PORT}`);
+  } catch (err) {
+    fastify.log.error(err, '[start] Erro ao iniciar servidor');
+    process.exit(1);
+  }
 }
 
 start();
