@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import fastifyPostgres from '@fastify/postgres';
 import dotenv from 'dotenv';
 import { Server as IOServer } from 'socket.io';
 
@@ -22,24 +21,13 @@ dotenv.config();
 async function buildServer() {
   const fastify = Fastify({ logger: true });
 
-  // Conexão com PostgreSQL via plugin para expor fastify.pg
-  await fastify.register(fastifyPostgres, {
-    connectionString: process.env.PG_CONNECTION_STRING || process.env.DATABASE_URL,
-  });
-
   await fastify.register(cors, {
     origin: '*',
     methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
   });
   await fastify.register(multipart);
-
-  // Se houver initDB para migração ou seed
-  if (initDB) {
-    await initDB();
-    fastify.log.info('[initDB] Migrações/Seed finalizados.');
-  }
-
-  fastify.log.info('[build] fastify-postgres registrado.');
+  await initDB();
+  fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
   return fastify;
 }
 
@@ -66,102 +54,101 @@ async function start() {
 
   io.on('connection', (socket) => {
     fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`);
-
-    const { auth, query } = socket.handshake;
-    const email = auth?.email || query?.email;
+    const email = socket.handshake.auth.email;
     if (!email) {
-      fastify.log.warn(`[Socket.IO] Sem e-mail no handshake/auth/query: ${socket.id}`);
-      socket.disconnect(true);
+      fastify.log.warn(`[Socket.IO] Sem e-mail no handshake: ${socket.id}`);
       return;
     }
 
-    // Marca como online
+    // Armazena a conexão
     userStatusMap.set(email, {
       socketId: socket.id,
       status: 'online',
       lastActivity: new Date()
     });
+
+    // Atualiza status no banco
     updateAtendenteStatus(email, 'online');
 
-    // Heartbeat: atualiza lastActivity para manter conexão viva
-    socket.on('heartbeat', () => {
-      const status = userStatusMap.get(email);
-      if (status) {
-        status.lastActivity = new Date();
-        userStatusMap.set(email, status);
+    // Heartbeat para verificar conexão ativa
+    socket.on('heartbeat', (userEmail) => {
+      const userStatus = userStatusMap.get(userEmail);
+      if (userStatus) {
+        userStatus.lastActivity = new Date();
+        userStatusMap.set(userEmail, userStatus);
       }
     });
 
-    // Atividade manual do usuário
+    // Eventos de atividade/inatividade
     socket.on('user_active', async () => {
-      const status = userStatusMap.get(email);
-      if (status) {
-        status.status = 'online';
-        status.lastActivity = new Date();
-        userStatusMap.set(email, status);
-        await updateAtendenteStatus(email, 'online');
-      }
+      userStatusMap.set(email, {
+        ...userStatusMap.get(email),
+        status: 'online',
+        lastActivity: new Date()
+      });
+      await updateAtendenteStatus(email, 'online');
     });
 
     socket.on('user_inactive', async () => {
-      const status = userStatusMap.get(email);
-      if (status) {
-        status.status = 'away';
-        status.lastActivity = new Date();
-        userStatusMap.set(email, status);
-        await updateAtendenteStatus(email, 'away');
-      }
+      userStatusMap.set(email, {
+        ...userStatusMap.get(email),
+        status: 'away',
+        lastActivity: new Date()
+      });
+      await updateAtendenteStatus(email, 'away');
     });
 
-    // Join/Leave salas de chat
+    // Join nas salas de chat
     socket.on('join_room', (userId) => {
       const normalized = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
       socket.join(`chat-${normalized}`);
       fastify.log.info(`[Socket.IO] ${socket.id} entrou em chat-${normalized}`);
     });
+
     socket.on('leave_room', (userId) => {
-      const normalized = userId.includes('@') ? userId : `${userId}@w.msgcli.net`;
-      socket.leave(`chat-${normalized}`);
-      fastify.log.info(`[Socket.IO] ${socket.id} saiu de chat-${normalized}`);
+      socket.leave(`chat-${userId}`);
+      fastify.log.info(`[Socket.IO] ${socket.id} saiu de chat-${userId}`);
     });
 
-    // Desconexão: marca offline no banco
     socket.on('disconnect', async (reason) => {
       fastify.log.info(`[Socket.IO] Desconectado ${socket.id} (razão=${reason})`);
       userStatusMap.delete(email);
       await updateAtendenteStatus(email, 'offline');
     });
 
-    // Eventos opcionais de presença
+    // Eventos específicos do atendente
     socket.on('atendente_online', async () => {
       await updateAtendenteStatus(email, 'online');
     });
+
     socket.on('atendente_offline', async () => {
       await updateAtendenteStatus(email, 'offline');
     });
   });
 
-  // Fallback de inatividade: se sem heartbeat por >45s, marca offline
+  // Verificação periódica de inatividade
   setInterval(() => {
-    const now = Date.now();
+    const now = new Date();
     userStatusMap.forEach(async (status, email) => {
-      if ((now - status.lastActivity.getTime()) > 45000) {
-        userStatusMap.delete(email);
+      if ((now - status.lastActivity) > 45000) { // 45 segundos sem atividade
+        userStatusMap.set(email, {
+          ...status,
+          status: 'offline'
+        });
         await updateAtendenteStatus(email, 'offline');
       }
     });
-  }, 60000); // rodar a cada 1 min
+  }, 60000); // Verifica a cada 1 minuto
 
-  // Registra rotas REST
-  fastify.register(webhookRoutes,   { prefix: '/webhook' });
-  fastify.register(messageRoutes,   { prefix: '/api/v1/messages' });
-  fastify.register(chatsRoutes,     { prefix: '/api/v1/chats' });
-  fastify.register(flowRoutes,      { prefix: '/api/v1/flow' });
-  fastify.register(uploadRoutes,    { prefix: '/api/v1/bucket' });
-  fastify.register(clientesRoutes,  { prefix: '/api/v1/clientes' });
-  fastify.register(settingsRoutes,  { prefix: '/api/v1/settings' });
-  fastify.register(ticketsRoutes,   { prefix: '/api/v1/tickets' });
-  fastify.register(filaRoutes,      { prefix: '/api/v1/filas' });
+  fastify.register(webhookRoutes, { prefix: '/webhook' });
+  fastify.register(messageRoutes, { prefix: '/api/v1/messages' });
+  fastify.register(chatsRoutes,   { prefix: '/api/v1/chats' });
+  fastify.register(flowRoutes,    { prefix: '/api/v1/flow' });
+  fastify.register(uploadRoutes,  { prefix: '/api/v1/bucket' });
+  fastify.register(clientesRoutes,{ prefix: '/api/v1/clientes' });
+  fastify.register(settingsRoutes,{ prefix: '/api/v1/settings' });
+  fastify.register(ticketsRoutes, { prefix: '/api/v1/tickets' });
+  fastify.register(filaRoutes,    { prefix: '/api/v1/filas' });
   fastify.register(atendentesRoutes,{ prefix: '/api/v1/atendentes' });
 
   const PORT = process.env.PORT || 3000;
