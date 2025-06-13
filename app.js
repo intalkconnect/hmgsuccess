@@ -1,19 +1,20 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyPostgres from '@fastify/postgres';
 import dotenv from 'dotenv';
 import { Server as IOServer } from 'socket.io';
 
 import webhookRoutes from './routes/webhook.js';
 import messageRoutes from './routes/messages.js';
-import flowRoutes from './routes/flow.js';
-import uploadRoutes from './routes/uploadRoutes.js';
+import flowRoutes from './routes/flow.js';nimport uploadRoutes from './routes/uploadRoutes.js';
 import clientesRoutes from './routes/clientes.js';
 import settingsRoutes from './routes/settings.js';
 import ticketsRoutes from './routes/tickets.js';
 import chatsRoutes from './routes/chats.js';
 import filaRoutes from './routes/filas.js';
 import atendentesRoutes from './routes/atendentes.js';
+// se tiver initDB para migrações ou seed, mantenha, caso contrário remova
 import { initDB } from './services/db.js';
 
 dotenv.config();
@@ -21,13 +22,24 @@ dotenv.config();
 async function buildServer() {
   const fastify = Fastify({ logger: true });
 
+  // Conexão com PostgreSQL via plugin para expor fastify.pg
+  await fastify.register(fastifyPostgres, {
+    connectionString: process.env.PG_CONNECTION_STRING || process.env.DATABASE_URL,
+  });
+
   await fastify.register(cors, {
     origin: '*',
     methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
   });
   await fastify.register(multipart);
-  await initDB();
-  fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.');
+
+  // Se houver initDB para migração ou seed
+  if (initDB) {
+    await initDB();
+    fastify.log.info('[initDB] Migrações/Seed finalizados.');
+  }
+
+  fastify.log.info('[initDB] Plugin fastify-postgres registrado.');
   return fastify;
 }
 
@@ -42,6 +54,7 @@ async function start() {
   // Função auxiliar para atualizar status
   async function updateAtendenteStatus(email, status) {
     try {
+      // usa fastify.pg para executar query
       await fastify.pg.query(
         'UPDATE atendentes SET status = $1, last_activity = NOW() WHERE email = $2',
         [status, email]
