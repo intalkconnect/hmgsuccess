@@ -120,7 +120,7 @@ async function chatsRoutes(fastify, options) {
 
     return reply.send(rows[0]);
   } catch (err) {
-    req.log.error('Erro ao atribuir próximo ticket:', err);
+    fastify.log.error('Erro ao atribuir próximo ticket:', error);
     return reply.code(500).send({ error: 'Erro interno' });
   }
 });
