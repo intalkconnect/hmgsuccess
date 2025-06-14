@@ -62,6 +62,7 @@ async function chatsRoutes(fastify, options) {
     const { rows } = await dbPool.query(
       `
       SELECT 
+        t.id,
         t.user_id,
         t.ticket_number,
         t.fila,
