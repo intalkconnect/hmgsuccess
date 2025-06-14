@@ -69,7 +69,7 @@ async function chatsRoutes(fastify, options) {
         t.created_at
       FROM tickets t
       WHERE t.status = 'open'
-        AND t.assigned_to IS NULL
+        AND (t.assigned_to IS NULL OR t.assigned_to = '')
         AND t.fila = ANY($1)
       ORDER BY t.created_at ASC
       `,
