@@ -17,22 +17,24 @@ async function chatsRoutes(fastify, options) {
     try {
       const { rows } = await dbPool.query(
         `
-        SELECT 
-          t.user_id,
-          t.ticket_number,
-          t.fila,
-          t.assigned_to,
-          t.status,
-          c.name,
-          c.channel,
-          c.phone,
-          c.atendido
-        FROM tickets t
-        JOIN clientes c ON t.user_id = c.user_id
-        WHERE t.status = 'open'
-          AND t.assigned_to = $1
-          AND t.fila = ANY($2)
-        ORDER BY t.created_at DESC
+SELECT 
+  t.user_id,
+  t.ticket_number,
+  t.fila,
+  f.color AS fila_color,        
+  t.assigned_to,
+  t.status,
+  c.name,
+  c.channel,
+  c.phone,
+  c.atendido
+FROM tickets t
+JOIN clientes c ON t.user_id = c.user_id
+JOIN filas f ON f.nome = t.fila  
+WHERE t.status = 'open'
+  AND t.assigned_to = $1
+  AND t.fila = ANY($2)
+ORDER BY t.created_at DESC;
         `,
         [assigned_to, filaList]
       );
