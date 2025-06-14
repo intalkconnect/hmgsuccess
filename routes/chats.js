@@ -87,6 +87,45 @@ async function chatsRoutes(fastify, options) {
   }
 });
 
+  fastify.put('/fila/proximo', async (req, reply) => {
+  const { email, filas } = req.body;
+
+  if (!email || !filas || !Array.isArray(filas)) {
+    return reply.code(400).send({ error: 'email e filas[] são obrigatórios' });
+  }
+
+  try {
+    const { rows } = await dbPool.query(
+      `
+      UPDATE tickets
+      SET assigned_to = $1
+      WHERE user_id = (
+        SELECT user_id
+        FROM tickets
+        WHERE status = 'open'
+          AND (t.assigned_to IS NULL OR t.assigned_to = '')
+          AND fila = ANY($2)
+        ORDER BY created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *;
+      `,
+      [email, filas]
+    );
+
+    if (rows.length === 0) {
+      return reply.code(204).send(); // Sem ticket disponível
+    }
+
+    return reply.send(rows[0]);
+  } catch (err) {
+    req.log.error('Erro ao atribuir próximo ticket:', err);
+    return reply.code(500).send({ error: 'Erro interno' });
+  }
+});
+
+  
 }
 
 export default chatsRoutes;
