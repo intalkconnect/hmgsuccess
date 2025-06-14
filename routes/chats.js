@@ -99,11 +99,11 @@ async function chatsRoutes(fastify, options) {
       `
       UPDATE tickets
       SET assigned_to = $1
-      WHERE user_id = (
-        SELECT user_id
+      WHERE id = (
+        SELECT id
         FROM tickets
         WHERE status = 'open'
-          AND (t.assigned_to IS NULL OR t.assigned_to = '')
+          AND (assigned_to IS NULL OR assigned_to = '')
           AND fila = ANY($2)
         ORDER BY created_at ASC
         LIMIT 1
