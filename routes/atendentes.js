@@ -78,6 +78,32 @@ async function atendentesRoutes(fastify, _options) {
     }
   });
 
+    // ✏️ Atualizar atendente
+  fastify.put('/session/:email', async (req, reply) => {
+    const { email } = req.params;
+    const { session } = req.body;
+
+    if (!email)) {
+      return reply.code(400).send({ error: 'Campos inválidos' });
+    }
+
+    try {
+      const { rowCount } = await dbPool.query(
+        `UPDATE atendentes
+         SET session = $2
+         WHERE email = $1`,
+        [email, session]
+      );
+
+      if (rowCount === 0) return reply.code(404).send({ error: 'Atendente não encontrado' });
+
+      return reply.send({ success: true });
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Erro ao atualizar atendente' });
+    }
+  });
+
   // 🗑️ Excluir atendente
   fastify.delete('/:id', async (req, reply) => {
     const { id } = req.params;
