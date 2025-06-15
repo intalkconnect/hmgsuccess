@@ -15,11 +15,11 @@ async function atendentesRoutes(fastify, _options) {
   });
 
   // 🔍 Buscar atendente por ID
-  fastify.get('/:id', async (req, reply) => {
-    const { id } = req.params;
+  fastify.get('/:email', async (req, reply) => {
+    const { email } = req.params;
     try {
       const { rows } = await dbPool.query(
-        `SELECT id, name, lastname, email, status, filas, created_at FROM atendentes WHERE id = $1`,
+        `SELECT id, name, lastname, email, status, filas, created_at FROM atendentes WHERE email = $1`,
         [id]
       );
       if (rows.length === 0) return reply.code(404).send({ error: 'Atendente não encontrado' });
