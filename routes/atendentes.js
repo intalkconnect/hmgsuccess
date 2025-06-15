@@ -20,7 +20,7 @@ async function atendentesRoutes(fastify, _options) {
     try {
       const { rows } = await dbPool.query(
         `SELECT id, name, lastname, email, status, filas, created_at FROM atendentes WHERE email = $1`,
-        [id]
+        [email]
       );
       if (rows.length === 0) return reply.code(404).send({ error: 'Atendente não encontrado' });
       return reply.send(rows[0]);
