@@ -83,7 +83,7 @@ async function atendentesRoutes(fastify, _options) {
     const { email } = req.params;
     const { session } = req.body;
 
-    if (!email)) {
+    if (!email) {
       return reply.code(400).send({ error: 'Campos inválidos' });
     }
 
