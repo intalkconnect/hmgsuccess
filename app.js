@@ -61,9 +61,25 @@ async function start() {
       fastify.log.info(`[Socket.IO] Socket ${socket.id} saiu da sala chat-${userId}`)
     })
 
-    socket.on('disconnect', (reason) => {
-      fastify.log.info(`[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`)
+    socket.on('disconnect', async (reason) => {
+      fastify.log.info(
+        `[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`
+      )
+      try {
+        // Atualiza status via sessionId
+        await fastify.inject({
+          method: 'PUT',
+          url: '/api/v1/atendentes/session',
+          payload: { sessionId: socket.id }
+        })
+        fastify.log.info(
+          `[Session] Sessão ${socket.id} marcada como offline`
+        )
+      } catch (err) {
+        fastify.log.error(err, 'Erro ao atualizar sessão offline')
+      }
     })
+    
   })
 
 fastify.log.info('[start] Registrando rotas...')
