@@ -14,6 +14,7 @@ import ticketsRoutes from './routes/tickets.js';
 import chatsRoutes from './routes/chats.js';
 import filaRoutes from './routes/filas.js';
 import atendentesRoutes from './routes/atendentes.js';
+import quickRepliesRoutes from './routes/quickReplies.js';
 
 import { initDB } from './services/db.js'
 
