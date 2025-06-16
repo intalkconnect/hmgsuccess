@@ -92,6 +92,7 @@ fastify.register(settingsRoutes, { prefix: '/api/v1/settings' })
 fastify.register(ticketsRoutes, { prefix: '/api/v1/tickets' })
 fastify.register(filaRoutes, { prefix: '/api/v1/filas' })
 fastify.register(atendentesRoutes, { prefix: '/api/v1/atendentes' })
+fastify.register(quickRepliesRoutes, { prefix: '/api/v1/quickReplies' })  
 fastify.log.info('[start] Rotas registradas com sucesso.')
 
   const PORT = process.env.PORT || 3000
