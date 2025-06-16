@@ -69,7 +69,7 @@ async function start() {
         // Atualiza status via sessionId
         await fastify.inject({
           method: 'PUT',
-          url: `/api/v1/atendentes/session/${socket.id}`
+          url: `/api/v1/atendentes/status/${socket.id}`
         })
         fastify.log.info(
           `[Session] Sessão ${socket.id} marcada como offline`
