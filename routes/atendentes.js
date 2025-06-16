@@ -90,7 +90,7 @@ async function atendentesRoutes(fastify, _options) {
     try {
       const { rowCount } = await dbPool.query(
         `UPDATE atendentes
-         SET session = $2
+         SET session_id = $2
          WHERE email = $1`,
         [email, session]
       );
@@ -134,8 +134,8 @@ async function atendentesRoutes(fastify, _options) {
     try {
       const { rowCount } = await dbPool.query(
         `UPDATE atendentes
-SET session = NULL
-WHERE session = $1;
+SET session_id = NULL
+WHERE session_id = $1;
 `,
         [session]
       );
