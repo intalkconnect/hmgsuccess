@@ -2,7 +2,7 @@ import fp from 'fastify-plugin';
 
 export default quickRepliesRoutes(async (fastify, opts) => {
   // GET /api/v1/quick_replies
-  fastify.get('/quick_replies', async (request, reply) => {
+  fastify.get('/', async (request, reply) => {
     const { rows } = await fastify.pg.query(
       'SELECT id, title, content, created_at, updated_at FROM quick_replies ORDER BY id'
     );
@@ -10,7 +10,7 @@ export default quickRepliesRoutes(async (fastify, opts) => {
   });
 
   // GET /api/v1/quick_replies/:id
-  fastify.get('/quick_replies/:id', async (request, reply) => {
+  fastify.get('/:id', async (request, reply) => {
     const { id } = request.params;
     const { rows } = await fastify.pg.query(
       'SELECT id, title, content, created_at, updated_at FROM quick_replies WHERE id = $1',
@@ -21,7 +21,7 @@ export default quickRepliesRoutes(async (fastify, opts) => {
   });
 
   // POST /api/v1/quick_replies
-  fastify.post('/quick_replies', async (request, reply) => {
+  fastify.post('/', async (request, reply) => {
     const { title, content } = request.body;
     const { rows } = await fastify.pg.query(
       'INSERT INTO quick_replies (title, content) VALUES ($1, $2) RETURNING id, title, content, created_at, updated_at',
@@ -31,7 +31,7 @@ export default quickRepliesRoutes(async (fastify, opts) => {
   });
 
   // PUT /api/v1/quick_replies/:id
-  fastify.put('/quick_replies/:id', async (request, reply) => {
+  fastify.put('/:id', async (request, reply) => {
     const { id } = request.params;
     const { title, content } = request.body;
     const { rowCount } = await fastify.pg.query(
@@ -43,7 +43,7 @@ export default quickRepliesRoutes(async (fastify, opts) => {
   });
 
   // DELETE /api/v1/quick_replies/:id
-  fastify.delete('/quick_replies/:id', async (request, reply) => {
+  fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params;
     const { rowCount } = await fastify.pg.query(
       'DELETE FROM quick_replies WHERE id = $1',
