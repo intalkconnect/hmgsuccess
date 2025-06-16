@@ -1,55 +1,50 @@
-import fp from 'fastify-plugin';
+import { dbPool } from '../services/db.js';
 
-export default quickRepliesRoutes(async (fastify, opts) => {
-  // GET /api/v1/quick_replies
-  fastify.get('/', async (request, reply) => {
-    const { rows } = await fastify.pg.query(
-      'SELECT id, title, content, created_at, updated_at FROM quick_replies ORDER BY id'
-    );
-    return rows;
+async function quickReplyRoutes(fastify, options) {
+  // ➕ Criar nova resposta rápida
+  fastify.post('/', async (req, reply) => {
+    const { title, content } = req.body;
+    if (!title || !content) {
+      return reply.code(400).send({ error: 'title e content são obrigatórios' });
+    }
+
+    try {
+      const { rows } = await dbPool.query(
+        'INSERT INTO quick_replies (title, content) VALUES ($1, $2) RETURNING *',
+        [title, content]
+      );
+      return reply.send(rows[0]);
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Erro ao criar resposta rápida' });
+    }
   });
 
-  // GET /api/v1/quick_replies/:id
-  fastify.get('/:id', async (request, reply) => {
-    const { id } = request.params;
-    const { rows } = await fastify.pg.query(
-      'SELECT id, title, content, created_at, updated_at FROM quick_replies WHERE id = $1',
-      [id]
-    );
-    if (!rows.length) return reply.code(404).send({ error: 'Not found' });
-    return rows[0];
+  // 📄 Listar todas as respostas rápidas
+  fastify.get('/', async (_, reply) => {
+    try {
+      const { rows } = await dbPool.query(
+        'SELECT id, title, content FROM quick_replies ORDER BY title'
+      );
+      return reply.send(rows);
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Erro ao buscar respostas rápidas' });
+    }
   });
 
-  // POST /api/v1/quick_replies
-  fastify.post('/', async (request, reply) => {
-    const { title, content } = request.body;
-    const { rows } = await fastify.pg.query(
-      'INSERT INTO quick_replies (title, content) VALUES ($1, $2) RETURNING id, title, content, created_at, updated_at',
-      [title, content]
-    );
-    return reply.code(201).send(rows[0]);
+  // 🗑️ Remover uma resposta rápida
+  fastify.delete('/:id', async (req, reply) => {
+    const { id } = req.params;
+    try {
+      const { rowCount } = await dbPool.query('DELETE FROM quick_replies WHERE id = $1', [id]);
+      if (rowCount === 0) return reply.code(404).send({ error: 'Resposta não encontrada' });
+      return reply.send({ success: true });
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Erro ao deletar resposta' });
+    }
   });
+}
 
-  // PUT /api/v1/quick_replies/:id
-  fastify.put('/:id', async (request, reply) => {
-    const { id } = request.params;
-    const { title, content } = request.body;
-    const { rowCount } = await fastify.pg.query(
-      'UPDATE quick_replies SET title = $1, content = $2 WHERE id = $3',
-      [title, content, id]
-    );
-    if (rowCount === 0) return reply.code(404).send({ error: 'Not found' });
-    return { ok: true };
-  });
-
-  // DELETE /api/v1/quick_replies/:id
-  fastify.delete('/:id', async (request, reply) => {
-    const { id } = request.params;
-    const { rowCount } = await fastify.pg.query(
-      'DELETE FROM quick_replies WHERE id = $1',
-      [id]
-    );
-    if (rowCount === 0) return reply.code(404).send({ error: 'Not found' });
-    return { ok: true };
-  });
-});
+export default quickReplyRoutes;
