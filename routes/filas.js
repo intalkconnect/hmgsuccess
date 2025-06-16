@@ -92,7 +92,7 @@ async function quickReplyRoutes(fastify, options) {
       fastify.log.error(err);
       return reply.code(500).send({ error: 'Erro ao buscar permissões' });
     }
-  };
+  });
 }
 
 export default quickReplyRoutes;
