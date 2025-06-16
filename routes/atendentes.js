@@ -124,18 +124,20 @@ async function atendentesRoutes(fastify, _options) {
   });
 
   // ✅ Atualizar status (online/offline)
-  fastify.put('/status/:email', async (req, reply) => {
-    const { email } = req.params;
-    const { status } = req.body;
+  fastify.put('/status/:session', async (req, reply) => {
+    const { session } = req.params;
 
-    if (!email || !['online', 'offline'].includes(status)) {
+    if (!session) {
       return reply.code(400).send({ error: 'Email e status válidos são obrigatórios' });
     }
 
     try {
       const { rowCount } = await dbPool.query(
-        `UPDATE atendentes SET status = $1 WHERE email = $2`,
-        [status, email]
+        `UPDATE atendentes
+SET session = NULL
+WHERE session = $1;
+`,
+        [session]
       );
 
       if (rowCount === 0) return reply.code(404).send({ error: 'Atendente não encontrado' });
