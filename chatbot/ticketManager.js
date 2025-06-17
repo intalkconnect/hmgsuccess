@@ -1,9 +1,20 @@
-import { dbPool } from '../services/db.js'
+import { dbPool } from '../services/db.js';
 
 export async function distribuirTicket(userId, queueName) {
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
+
+    // 🔍 Verificar se já existe um ticket aberto
+    const ticketAbertoQuery = await client.query(
+      'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
+      [userId, 'open']
+    );
+    const ticketAberto = ticketAbertoQuery.rows[0];
+    if (ticketAberto) {
+      await client.query('COMMIT');
+      return { ticketExists: true, ticketId: ticketAberto.id };
+    }
 
     // 1. Buscar configuração
     const configQuery = await client.query(
@@ -12,90 +23,64 @@ export async function distribuirTicket(userId, queueName) {
     );
     const modoDistribuicao = configQuery.rows[0]?.value || 'manual';
 
-if (modoDistribuicao === 'manual') {
-  console.log('[📥 Manual] Criando ticket aguardando agente.');
-
-  let fila = queueName;
-  if (!fila) {
-    const filaResult = await client.query(
-      'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
-      [userId]
-    );
-    fila = filaResult.rows[0]?.fila || 'Default';
-  }
-
-  const createTicketQuery = await client.query(
-    `SELECT create_ticket($1, $2, $3) as ticket_number`,
-    [userId, fila, null]
-  );
-
-  const ticketNumber = createTicketQuery.rows[0].ticket_number;
-
-  await client.query('COMMIT');
-  return {
-    mode: 'manual',
-    ticketNumber,
-    assignedTo: null,
-  };
-}
-
-
-
     // 2. Determinar fila do cliente
     let filaCliente = queueName;
     if (!filaCliente) {
-      const clienteQuery = await client.query(
+      const filaResult = await client.query(
         'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
         [userId]
       );
-      filaCliente = clienteQuery.rows[0]?.fila || 'Default';
-      if (!queueName) {
-        console.warn('⚠️ Cliente não tem fila definida, usando fila Default.');
-      }
+      filaCliente = filaResult.rows[0]?.fila || 'Default';
     }
 
-    // 3. Verificar ticket aberto existente
-    const ticketAbertoQuery = await client.query(
-      'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
-      [userId, 'open']
-    );
-    const ticketAberto = ticketAbertoQuery.rows[0];
+    if (modoDistribuicao === 'manual') {
+      console.log('[📥 Manual] Criando ticket aguardando agente.');
 
-    if (ticketAberto) {
+      const createTicketQuery = await client.query(
+        `SELECT create_ticket($1, $2, $3) as ticket_number`,
+        [userId, filaCliente, null]
+      );
+
+      const ticketNumber = createTicketQuery.rows[0].ticket_number;
+
       await client.query('COMMIT');
-      return { ticketExists: true, ticketId: ticketAberto.id };
+      return {
+        mode: 'manual',
+        ticketNumber,
+        assignedTo: null,
+      };
     }
 
-    // 4. Buscar atendentes online da fila
+    // 3. Buscar atendentes online da fila
     const atendentesQuery = await client.query(
       'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
     );
-    const candidatos = atendentesQuery.rows.filter(a => 
+    const candidatos = atendentesQuery.rows.filter(a =>
       Array.isArray(a.filas) && a.filas.includes(filaCliente)
     );
 
     if (!candidatos.length) {
       console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
-      
+
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, null]
       );
-      
+
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
       console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${ticketNumber}`);
-      
+
       await client.query('COMMIT');
-      return { 
-        success: true, 
-        ticketNumber, 
+      return {
+        success: true,
+        ticketNumber,
         assignedTo: null,
-        mode: 'auto-no-agent' 
+        mode: 'auto-no-agent',
       };
     }
 
-    // 5. Buscar contagem de tickets por atendente
+    // 4. Contagem de tickets por atendente
     const cargasQuery = await client.query(`
       SELECT assigned_to, COUNT(*) as total_tickets 
       FROM tickets 
@@ -107,7 +92,7 @@ if (modoDistribuicao === 'manual') {
       mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
     });
 
-    // 6. Escolher atendente com menos carga (usando email como chave)
+    // 5. Escolher atendente com menor carga
     candidatos.sort((a, b) => {
       const cargaA = mapaCargas[a.email] || 0;
       const cargaB = mapaCargas[b.email] || 0;
@@ -121,7 +106,7 @@ if (modoDistribuicao === 'manual') {
       return { success: false, error: 'No agent available' };
     }
 
-    // 7. Atribuir ou criar ticket
+    // 6. Criar ticket atribuído
     const createTicketQuery = await client.query(
       `SELECT create_ticket($1, $2, $3) as ticket_number`,
       [userId, filaCliente, escolhido]
@@ -129,13 +114,13 @@ if (modoDistribuicao === 'manual') {
 
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
     console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
-    
+
     await client.query('COMMIT');
-    return { 
-      success: true, 
-      ticketNumber, 
+    return {
+      success: true,
+      ticketNumber,
       assignedTo: escolhido,
-      mode: 'auto-created' 
+      mode: 'auto-created',
     };
 
   } catch (error) {
