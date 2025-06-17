@@ -15,22 +15,30 @@ export async function distribuirTicket(userId, queueName) {
 if (modoDistribuicao === 'manual') {
   console.log('[📥 Manual] Criando ticket aguardando agente.');
 
+  let fila = queueName;
+  if (!fila) {
+    const filaResult = await client.query(
+      'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
+      [userId]
+    );
+    fila = filaResult.rows[0]?.fila || 'Default';
+  }
+
   const createTicketQuery = await client.query(
-    `SELECT create_ticket(NULL, $1, NULL) as ticket_number`,
-    [queueName || 'Default']
+    `SELECT create_ticket($1, $2, $3) as ticket_number`,
+    [userId, fila, null]
   );
 
   const ticketNumber = createTicketQuery.rows[0].ticket_number;
-  console.log(`[✅ Criado] Ticket MANUAL criado sem user_id: ${ticketNumber}`);
 
   await client.query('COMMIT');
-  return { 
-    mode: 'manual', 
-    ticketNumber, 
-    success: true,
-    assignedTo: null
+  return {
+    mode: 'manual',
+    ticketNumber,
+    assignedTo: null,
   };
 }
+
 
 
     // 2. Determinar fila do cliente
