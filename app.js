@@ -79,6 +79,14 @@ async function start() {
         fastify.log.error(err, 'Erro ao atualizar sessão offline')
       }
     })
+
+    socket.on('identify', ({ email, rooms }) => {
+  rooms.forEach(room => {
+    socket.join(`chat-${room}`);
+    fastify.log.info(`[Socket.IO] ${email} entrou na sala chat-${room}`);
+  });
+});
+
     
   })
 
