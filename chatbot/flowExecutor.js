@@ -39,7 +39,7 @@ if (session.current_block === 'atendimento_humano') {
       sessionVars.lastUserMessage = message;
     } else {
       const awaiting = flow.blocks[storedBlock];
-      if (awaiting.awaitResponse) {
+      if (awaiting.actions && awaiting.actions.length > 0) {
         if (!message) return null;
         sessionVars.lastUserMessage = message;
 
