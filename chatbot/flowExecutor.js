@@ -24,7 +24,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   let currentBlockId = null;
 
   // 2) Se já estiver em atendimento humano, salva e interrompe
-if (session.current_block === 'atendimento_humano') {
+if (session.current_block === 'human') {
 
 }
 
@@ -84,7 +84,7 @@ if (block.content?.queueName) {
   console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
 }
 
-await saveSession(userId, 'atendimento_humano', flow.id, sessionVars);
+await saveSession(userId, 'human', flow.id, sessionVars);
 await distribuirTicket(userId, sessionVars.fila);
 return;
 
