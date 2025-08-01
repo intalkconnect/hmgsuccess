@@ -7,7 +7,7 @@ export async function distribuirTicket(userId, queueName) {
     await client.query('BEGIN');
 
     async function inserirMensagemSistema(ticketNumber) {
-  const systemMessage = "Ticket #${ticketNumber}";
+  const systemMessage = `Ticket #${ticketNumber}`;
   const whatsappMessageId = uuidv4(); // gerar ID único
 
   await client.query(`
