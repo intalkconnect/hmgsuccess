@@ -1,9 +1,32 @@
 import { dbPool } from '../services/db.js';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function distribuirTicket(userId, queueName) {
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
+
+    async function inserirMensagemSistema(ticketNumber) {
+  const systemMessage = "Ticket criado";
+  const whatsappMessageId = uuidv4(); // gerar ID único
+
+  await client.query(`
+    INSERT INTO messages (
+      user_id,
+      type,
+      direction,
+      content,
+      timestamp,
+      whatsapp_message_id
+    ) VALUES (
+      $1, 'system', 'system', $2, NOW(), $3
+    )
+  `, [
+    userId,
+    JSON.stringify(systemMessage),
+    whatsappMessageId
+  ]);
+}
 
     // 🔍 Verificar se já existe um ticket aberto
     const ticketAbertoQuery = await client.query(
@@ -43,6 +66,8 @@ export async function distribuirTicket(userId, queueName) {
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
 
+      await inserirMensagemSistema(ticketNumber);
+      
       await client.query('COMMIT');
       return {
         mode: 'manual',
@@ -113,6 +138,7 @@ export async function distribuirTicket(userId, queueName) {
     );
 
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
+    await inserirMensagemSistema(ticketNumber);
     console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
 
     await client.query('COMMIT');
