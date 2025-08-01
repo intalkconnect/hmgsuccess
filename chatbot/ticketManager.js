@@ -35,9 +35,7 @@ export async function distribuirTicket(userId, queueName) {
 
     // Função auxiliar para criar mensagem sistêmica
     async function inserirMensagemSistema(ticketNumber) {
-      const systemMessage = {
-        text: `🎫 Ticket #${ticketNumber} criado`,
-        ticket_number: ticketNumber
+      const systemMessage = "Ticket criado"
       };
       await client.query(`
         INSERT INTO messages (user_id, type, direction, content, timestamp)
