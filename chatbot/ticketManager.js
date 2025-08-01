@@ -1,4 +1,5 @@
 import { dbPool } from '../services/db.js';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function distribuirTicket(userId, queueName) {
   const client = await dbPool.connect();
@@ -33,16 +34,37 @@ export async function distribuirTicket(userId, queueName) {
       filaCliente = filaResult.rows[0]?.fila || 'Default';
     }
 
-        async function inserirMensagemSistema(ticketNumber) {
-      const systemMessage = "Ticket criado";
-      await client.query(`
-        INSERT INTO messages (user_id, type, direction, content, timestamp)
-        VALUES ($1, 'system', 'system', $2, NOW())
-      `, [
-        userId,
-        JSON.stringify(systemMessage)
-      ]);
-    }
+async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMessageId, flowId }) {
+  const systemMessage = {
+    text: `🎫 Ticket #${ticketNumber} criado`,
+    ticket_number: ticketNumber,
+  };
+
+  await client.query(`
+    INSERT INTO messages (
+      id,
+      user_id,
+      type,
+      direction,
+      content,
+      timestamp,
+      whatsapp_message_id,
+      flow_id,
+      status,
+      ticket_number
+    ) VALUES (
+      gen_random_uuid(),
+      $1, 'system', 'system', $2, NOW(),
+      $3, $4, 'pending', $5
+    )
+  `, [
+    userId,
+    JSON.stringify(systemMessage),
+    whatsappMessageId || uuidv4(), // caso você não tenha, gere um ID fake válido
+    flowId || null,
+    ticketNumber,
+  ]);
+}
 
     if (modoDistribuicao === 'manual') {
       console.log('[📥 Manual] Criando ticket aguardando agente.');
