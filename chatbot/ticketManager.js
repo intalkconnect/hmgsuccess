@@ -33,22 +33,6 @@ export async function distribuirTicket(userId, queueName) {
       filaCliente = filaResult.rows[0]?.fila || 'Default';
     }
 
-    // Função auxiliar para criar mensagem sistêmica
-    async function inserirMensagemSistema(ticketNumber) {
-      const systemMessage = {
-        text: `🎫 Ticket #${ticketNumber} criado`,
-        ticket_number: ticketNumber
-      };
-      await client.query(`
-        INSERT INTO messages (user_id, type, direction, content, timestamp)
-        VALUES ($1, 'system', 'system', $2, NOW())
-      `, [
-        userId,
-        JSON.stringify(systemMessage)
-      ]);
-    }
-
-    // 3. Modo manual
     if (modoDistribuicao === 'manual') {
       console.log('[📥 Manual] Criando ticket aguardando agente.');
 
@@ -56,20 +40,18 @@ export async function distribuirTicket(userId, queueName) {
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, null]
       );
-      const ticketNumber = createTicketQuery.rows[0].ticket_number;
 
-      await inserirMensagemSistema(ticketNumber);
+      const ticketNumber = createTicketQuery.rows[0].ticket_number;
 
       await client.query('COMMIT');
       return {
-        success: true,
+        mode: 'manual',
         ticketNumber,
         assignedTo: null,
-        mode: 'manual'
       };
     }
 
-    // 4. Buscar atendentes online
+    // 3. Buscar atendentes online da fila
     const atendentesQuery = await client.query(
       'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
@@ -78,7 +60,6 @@ export async function distribuirTicket(userId, queueName) {
       Array.isArray(a.filas) && a.filas.includes(filaCliente)
     );
 
-    // 5. Nenhum atendente disponível
     if (!candidatos.length) {
       console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
 
@@ -86,20 +67,20 @@ export async function distribuirTicket(userId, queueName) {
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [userId, filaCliente, null]
       );
-      const ticketNumber = createTicketQuery.rows[0].ticket_number;
 
-      await inserirMensagemSistema(ticketNumber);
+      const ticketNumber = createTicketQuery.rows[0].ticket_number;
+      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${ticketNumber}`);
 
       await client.query('COMMIT');
       return {
         success: true,
         ticketNumber,
         assignedTo: null,
-        mode: 'auto-no-agent'
+        mode: 'auto-no-agent',
       };
     }
 
-    // 6. Escolher atendente com menor carga
+    // 4. Contagem de tickets por atendente
     const cargasQuery = await client.query(`
       SELECT assigned_to, COUNT(*) as total_tickets 
       FROM tickets 
@@ -107,10 +88,11 @@ export async function distribuirTicket(userId, queueName) {
       GROUP BY assigned_to
     `);
     const mapaCargas = {};
-    cargasQuery.rows.forEach(row => {
-      mapaCargas[row.assigned_to] = parseInt(row.total_tickets, 10);
+    cargasQuery.rows.forEach(linha => {
+      mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
     });
 
+    // 5. Escolher atendente com menor carga
     candidatos.sort((a, b) => {
       const cargaA = mapaCargas[a.email] || 0;
       const cargaB = mapaCargas[b.email] || 0;
@@ -124,15 +106,13 @@ export async function distribuirTicket(userId, queueName) {
       return { success: false, error: 'No agent available' };
     }
 
-    // 7. Criar ticket atribuído
+    // 6. Criar ticket atribuído
     const createTicketQuery = await client.query(
       `SELECT create_ticket($1, $2, $3) as ticket_number`,
       [userId, filaCliente, escolhido]
     );
+
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
-
-    await inserirMensagemSistema(ticketNumber);
-
     console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
 
     await client.query('COMMIT');
@@ -140,7 +120,7 @@ export async function distribuirTicket(userId, queueName) {
       success: true,
       ticketNumber,
       assignedTo: escolhido,
-      mode: 'auto-created'
+      mode: 'auto-created',
     };
 
   } catch (error) {
