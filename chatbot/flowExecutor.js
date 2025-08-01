@@ -84,7 +84,7 @@ if (block.content?.queueName) {
   console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
 }
 
-await saveSession(userId, 'human', flow.id, sessionVars);
+await saveSession(userId, currentBlockId, flow.id, sessionVars);
 await distribuirTicket(userId, sessionVars.fila);
 return;
 
