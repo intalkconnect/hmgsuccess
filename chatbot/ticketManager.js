@@ -23,7 +23,7 @@ export async function distribuirTicket(userId, queueName) {
     )
   `, [
     userId,
-    JSON.stringify(systemMessage),
+    systemMessage,
     whatsappMessageId
   ]);
 }
