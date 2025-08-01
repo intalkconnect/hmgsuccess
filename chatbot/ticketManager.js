@@ -1,40 +1,7 @@
 import { dbPool } from '../services/db.js';
 import { v4 as uuidv4 } from 'uuid';
 
-export async function distribuirTicket(userId, queueName) {
-  const client = await dbPool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // 🔍 Verificar se já existe um ticket aberto
-    const ticketAbertoQuery = await client.query(
-      'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
-      [userId, 'open']
-    );
-    const ticketAberto = ticketAbertoQuery.rows[0];
-    if (ticketAberto) {
-      await client.query('COMMIT');
-      return { ticketExists: true, ticketId: ticketAberto.id };
-    }
-
-    // 1. Buscar configuração
-    const configQuery = await client.query(
-      'SELECT value FROM settings WHERE key = $1 LIMIT 1',
-      ['distribuicao_tickets']
-    );
-    const modoDistribuicao = configQuery.rows[0]?.value || 'manual';
-
-    // 2. Determinar fila do cliente
-    let filaCliente = queueName;
-    if (!filaCliente) {
-      const filaResult = await client.query(
-        'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-      filaCliente = filaResult.rows[0]?.fila || 'Default';
-    }
-
-async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMessageId, flowId }) {
+async function inserirMensagemSistema(client, userId, ticketNumber, whatsappMessageId, flowId) {
   const systemMessage = {
     text: `🎫 Ticket #${ticketNumber} criado`,
     ticket_number: ticketNumber,
@@ -60,11 +27,48 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
   `, [
     userId,
     JSON.stringify(systemMessage),
-    whatsappMessageId || uuidv4(), // caso você não tenha, gere um ID fake válido
-    flowId || null,
-    ticketNumber,
+    whatsappMessageId,
+    flowId,
+    ticketNumber
   ]);
 }
+
+export async function distribuirTicket(userId, queueName) {
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verificar se já existe um ticket aberto
+    const ticketAbertoQuery = await client.query(
+      'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
+      [userId, 'open']
+    );
+    const ticketAberto = ticketAbertoQuery.rows[0];
+    if (ticketAberto) {
+      await client.query('COMMIT');
+      return { ticketExists: true, ticketId: ticketAberto.id };
+    }
+
+    // Buscar modo de distribuição
+    const configQuery = await client.query(
+      'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+      ['distribuicao_tickets']
+    );
+    const modoDistribuicao = configQuery.rows[0]?.value || 'manual';
+
+    // Determinar fila
+    let filaCliente = queueName;
+    if (!filaCliente) {
+      const filaResult = await client.query(
+        'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
+        [userId]
+      );
+      filaCliente = filaResult.rows[0]?.fila || 'Default';
+    }
+
+    // IDs para a mensagem sistêmica
+    const whatsappMessageId = uuidv4();
+    const flowId = null;
 
     if (modoDistribuicao === 'manual') {
       console.log('[📥 Manual] Criando ticket aguardando agente.');
@@ -76,7 +80,7 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
 
-      await inserirMensagemSistema(ticketNumber);
+      await inserirMensagemSistema(client, userId, ticketNumber, whatsappMessageId, flowId);
 
       await client.query('COMMIT');
       return {
@@ -86,7 +90,7 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
       };
     }
 
-    // 3. Buscar atendentes online da fila
+    // Buscar atendentes online
     const atendentesQuery = await client.query(
       'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
@@ -104,7 +108,8 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
       );
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
-      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${ticketNumber}`);
+
+      await inserirMensagemSistema(client, userId, ticketNumber, whatsappMessageId, flowId);
 
       await client.query('COMMIT');
       return {
@@ -115,7 +120,7 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
       };
     }
 
-    // 4. Contagem de tickets por atendente
+    // Contagem de tickets por atendente
     const cargasQuery = await client.query(`
       SELECT assigned_to, COUNT(*) as total_tickets 
       FROM tickets 
@@ -127,7 +132,7 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
       mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
     });
 
-    // 5. Escolher atendente com menor carga
+    // Escolher atendente com menor carga
     candidatos.sort((a, b) => {
       const cargaA = mapaCargas[a.email] || 0;
       const cargaB = mapaCargas[b.email] || 0;
@@ -141,14 +146,15 @@ async function inserirMensagemSistema({ client, userId, ticketNumber, whatsappMe
       return { success: false, error: 'No agent available' };
     }
 
-    // 6. Criar ticket atribuído
+    // Criar ticket atribuído
     const createTicketQuery = await client.query(
       `SELECT create_ticket($1, $2, $3) as ticket_number`,
       [userId, filaCliente, escolhido]
     );
 
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
-    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
+
+    await inserirMensagemSistema(client, userId, ticketNumber, whatsappMessageId, flowId);
 
     await client.query('COMMIT');
     return {
