@@ -14,6 +14,29 @@ export default async function messageRoutes(fastify, opts) {
     const { to, type, content, context } = req.body;
     const userId = `${to}@w.msgcli.net`;
 
+    // 🔍 Verifica última mensagem incoming para controle da janela de 24h
+const { rows: lastIncomingRows } = await dbPool.query(`
+  SELECT timestamp
+  FROM messages
+  WHERE user_id = $1
+    AND direction = 'incoming'
+  ORDER BY timestamp DESC
+  LIMIT 1
+`, [userId]);
+
+if (lastIncomingRows.length > 0) {
+  const lastIncomingTime = new Date(lastIncomingRows[0].timestamp);
+  const now = new Date();
+  const hoursDiff = (now - lastIncomingTime) / (1000 * 60 * 60);
+
+  if (hoursDiff > 24) {
+    return reply.code(400).send({
+      error: 'Fora da janela de 24h. Envie um template aprovado.'
+    });
+  }
+}
+
+    
     try {
       const result = await sendWhatsappMessage({ to, type, content, context });
       const whatsappMsgId = result.messages?.[0]?.id || null;
@@ -86,6 +109,38 @@ export default async function messageRoutes(fastify, opts) {
       return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
     }
   });
+
+  // ───────────────────────────────────────────────
+// VERIFICAR SE ESTÁ DENTRO DA JANELA DE 24 HORAS
+// ───────────────────────────────────────────────
+fastify.get('/check-24h/:user_id', async (req, reply) => {
+  const { user_id } = req.params;
+
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT timestamp FROM messages
+      WHERE user_id = $1 AND direction = 'incoming'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `, [user_id]);
+
+    if (!rows.length) {
+      return reply.send({ within24h: false, lastIncoming: null });
+    }
+
+    const last = new Date(rows[0].timestamp);
+    const diffInHours = (Date.now() - last.getTime()) / (1000 * 60 * 60);
+
+    return reply.send({
+      within24h: diffInHours <= 24,
+      lastIncoming: last.toISOString()
+    });
+  } catch (error) {
+    fastify.log.error('Erro ao verificar janela de 24h:', error);
+    return reply.code(500).send({ error: 'Erro ao verificar janela de 24h' });
+  }
+});
+
 
   // ───────────────────────────────────────────────
   // ATUALIZAÇÃO DE STATUS DE LEITURA
@@ -281,3 +336,4 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
