@@ -169,6 +169,20 @@ export default async function webhookRoutes(fastify) {
           new Date().toISOString(), new Date().toISOString(), 'whatsapp'
         ])
 
+        await dbPool.query(`
+  UPDATE messages
+  SET status = 'read'
+  WHERE id = (
+    SELECT id FROM messages
+    WHERE user_id = $1
+      AND direction = 'incoming'
+      AND whatsapp_message_id != $2
+      AND status != 'read'
+    ORDER BY timestamp DESC
+    LIMIT 1
+  )
+`, [formattedUserId, msgId]);
+
         // Emite mensagem recebida
         if (io && insertedMessage) {
           setTimeout(() => {
@@ -215,3 +229,4 @@ export default async function webhookRoutes(fastify) {
     return reply.code(200).send('EVENT_RECEIVED')
   })
 }
+
