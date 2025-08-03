@@ -38,6 +38,39 @@ async function ticketsRoutes(fastify, options) {
     }
   });
 
+  fastify.get('/user/:user_id', async (req, reply) => {
+  const { user_id } = req.params;
+
+  if (!isValidUserId(user_id)) {
+    return reply.code(400).send({
+      error: 'Formato de user_id inválido. Use: usuario@dominio',
+    });
+  }
+
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT id, ticket_number, user_id
+       FROM tickets
+       WHERE user_id = $1 AND status = 'closed'
+       ORDER BY created_at DESC`,
+      [user_id]
+    );
+
+    if (rows.length === 0) {
+      return reply.code(404).send({ error: 'Nenhum ticket aberto encontrado' });
+    }
+
+    return reply.send({ tickets: rows });
+  } catch (error) {
+    fastify.log.error('Erro ao buscar tickets:', error);
+    return reply.code(500).send({
+      error: 'Erro interno ao buscar tickets',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
   // PUT /tickets/:user_id → Atualiza status, fila ou assigned_to
   fastify.put('/:user_id', async (req, reply) => {
     const { user_id } = req.params;
