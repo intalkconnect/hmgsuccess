@@ -49,7 +49,7 @@ async function ticketsRoutes(fastify, options) {
 
   try {
     const { rows } = await dbPool.query(
-      `SELECT id, ticket_number, user_id
+      `SELECT id, ticket_number, user_id, created_at 
        FROM tickets
        WHERE user_id = $1 AND status = 'closed'
        ORDER BY created_at DESC`,
