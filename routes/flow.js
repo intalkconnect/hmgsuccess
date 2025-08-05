@@ -110,7 +110,7 @@ export default async function flowRoutes(fastify, opts) {
   fastify.get('/history', async (req, reply) => {
   try {
     const { rows } = await dbPool.query(`
-      SELECT id, data, active, created_at 
+      SELECT id, active, created_at 
       FROM flows 
       ORDER BY created_at DESC 
       LIMIT 10
