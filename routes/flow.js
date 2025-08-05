@@ -1,35 +1,40 @@
 import { dbPool } from '../services/db.js';
 
 export default async function flowRoutes(fastify, opts) {
-  fastify.post('/publish', async (req, reply) => {
-    const { data } = req.body;
+fastify.post('/publish', async (req, reply) => {
+  const { data } = req.body;
 
-    if (!data || typeof data !== 'object') {
-      return reply.code(400).send({ error: 'Fluxo inválido ou ausente.' });
-    }
+  if (!data || typeof data !== 'object') {
+    return reply.code(400).send({ error: 'Fluxo inválido ou ausente.' });
+  }
 
-    try {
-      // Inserir novo fluxo vazio
-      const insertRes = await dbPool.query(
-        'INSERT INTO flows(data, created_at) VALUES($1, $2) RETURNING id',
-        [{}, new Date().toISOString()]
-      );
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
 
-      const insertedId = insertRes.rows[0].id;
-      const updatedFlow = { ...data, id: insertedId };
+    // 1. Desativa todos os fluxos ativos
+    await client.query('UPDATE flows SET active = false');
 
-      // Atualiza o fluxo com os dados completos
-      await dbPool.query(
-        'UPDATE flows SET data = $1 WHERE id = $2',
-        [updatedFlow, insertedId]
-      );
+    // 2. Insere novo fluxo com active=true
+    const insertRes = await client.query(
+      'INSERT INTO flows(data, created_at, active) VALUES($1, $2, $3) RETURNING id',
+      [data, new Date().toISOString(), true]
+    );
 
-      reply.send({ message: 'Fluxo publicado com sucesso.', id: insertedId });
-    } catch (error) {
-      fastify.log.error(error);
-      reply.code(500).send({ error: 'Erro ao salvar fluxo', detail: error.message });
-    }
-  });
+    const insertedId = insertRes.rows[0].id;
+
+    await client.query('COMMIT');
+
+    return reply.send({ message: 'Fluxo publicado e ativado com sucesso.', id: insertedId });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Erro ao publicar fluxo', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 
   fastify.get('/sessions/:user_id', async (req, reply) => {
     const { user_id } = req.params;
