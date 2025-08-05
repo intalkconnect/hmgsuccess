@@ -107,6 +107,26 @@ export default async function flowRoutes(fastify, opts) {
     }
   });
 
+  fastify.get('/history', async (req, reply) => {
+  try {
+    const { rows } = await dbPool.query(`
+      SELECT id, data, active, created_at 
+      FROM flows 
+      ORDER BY created_at DESC 
+      LIMIT 10
+    `);
+
+    return reply.code(200).send(rows);
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ 
+      error: 'Erro ao buscar histórico de versões', 
+      detail: error.message 
+    });
+  }
+});
+
+
   fastify.get('/data/:id', async (req, reply) => {
     const { id } = req.params;
 
