@@ -92,10 +92,9 @@ export default async function flowRoutes(fastify, opts) {
   fastify.get('/latest', async (req, reply) => {
     try {
       const { rows } = await dbPool.query(`
-        SELECT id, active, created_at 
-        FROM flows 
-        ORDER BY created_at DESC 
-        LIMIT 10
+      SELECT id, active, created_at 
+      FROM flows 
+      WHERE active = true 
       `);
 
       return reply.code(200).send(rows);
