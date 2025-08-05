@@ -79,20 +79,30 @@ fastify.post('/publish', async (req, reply) => {
     }
   });
 
-  fastify.post('/activate', async (req, reply) => {
-    const { id } = req.body;
-    
-    try {
-      await dbPool.query(
-        'UPDATE flows SET active = true WHERE id = $1',
-        [id]
-      );
-      return reply.code(200).send({ success: true });
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.code(500).send({ error: 'Erro ao ativar fluxo', detail: error.message });
-    }
-  });
+fastify.post('/activate', async (req, reply) => {
+  const { id } = req.body;
+
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Desativa todos
+    await client.query('UPDATE flows SET active = false');
+
+    // Ativa o fluxo específico
+    await client.query('UPDATE flows SET active = true WHERE id = $1', [id]);
+
+    await client.query('COMMIT');
+    return reply.code(200).send({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Erro ao ativar fluxo', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 
   fastify.get('/latest', async (req, reply) => {
     try {
