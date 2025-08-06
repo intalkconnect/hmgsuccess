@@ -28,8 +28,8 @@ SELECT
   c.channel,
   c.phone,
   c.atendido,
-  m.content AS last_message,
-  m.timestamp AS last_message_timestamp
+  m.content AS content,
+  m.timestamp AS timestamp
 FROM tickets t
 JOIN clientes c ON t.user_id = c.user_id
 JOIN filas f ON f.nome = t.fila
