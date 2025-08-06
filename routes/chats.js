@@ -28,8 +28,8 @@ SELECT
   c.channel,
   c.phone,
   c.atendido,
-m.content AS content,
-m.timestamp AS timestamp
+  m.content AS last_message,
+  m.timestamp AS last_message_timestamp
 FROM tickets t
 JOIN clientes c ON t.user_id = c.user_id
 JOIN filas f ON f.nome = t.fila
@@ -44,7 +44,6 @@ WHERE t.status = 'open'
   AND t.assigned_to = $1
   AND t.fila = ANY($2)
 ORDER BY t.created_at DESC;
-
         `,
         [assigned_to, filaList]
       );
