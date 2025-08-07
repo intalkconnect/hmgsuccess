@@ -316,34 +316,36 @@ fastify.get('/unread-counts', async (req, reply) => {
   // ───────────────────────────────────────────────
   // LISTAR MENSAGENS POR USUÁRIO
   // ───────────────────────────────────────────────
-  fastify.get('/:user_id', {
-    schema: {
-      params: {
-        type: 'object',
-        properties: {
-          user_id: { type: 'string', pattern: '^[^@]+@[^@]+\\.[^@]+$' },
-        },
-        required: ['user_id'],
+fastify.get('/:user_id', {
+  schema: {
+    params: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'string' }, // sem regex, aceita qualquer formato
       },
+      required: ['user_id'],
     },
-  }, async (req, reply) => {
-    const { user_id } = req.params;
-    try {
-      const { rows } = await dbPool.query(
-        `
-        SELECT *
-        FROM messages
-        WHERE user_id = $1
-        ORDER BY timestamp ASC;
+  },
+}, async (req, reply) => {
+  const { user_id } = req.params;
+  try {
+    const { rows } = await dbPool.query(
+      `
+      SELECT *
+      FROM messages
+      WHERE user_id = $1
+      ORDER BY timestamp ASC;
       `,
-        [user_id]
-      );
-      reply.send(rows);
-    } catch (error) {
-      reply.code(500).send({ error: 'Failed to fetch messages' });
-    }
-  });
+      [user_id]
+    );
+    reply.send(rows);
+  } catch (error) {
+    reply.code(500).send({ error: 'Failed to fetch messages' });
+  }
+});
+
 }
+
 
 
 
