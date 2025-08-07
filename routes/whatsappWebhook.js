@@ -7,7 +7,7 @@ import { uploadToMinio } from '../services/uploadToMinio.js'
 
 dotenv.config()
 
-export default async function webhookRoutes(fastify) {
+export default async function whatsappWebhook(fastify) {
   const io = fastify.io
 
   // Rota de verificação do webhook (inalterada)
@@ -229,4 +229,5 @@ export default async function webhookRoutes(fastify) {
     return reply.code(200).send('EVENT_RECEIVED')
   })
 }
+
 
