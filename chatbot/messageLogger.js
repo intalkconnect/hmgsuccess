@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto'
 export async function logOutgoingMessage(userId, type, content, flowId) {
   const query = `
     INSERT INTO messages (
-      user_id, whatsapp_message_id, direction, type, content,
+      user_id, message_id, direction, type, content,
       timestamp, flow_id, status,
       metadata, created_at, updated_at, channel
     ) VALUES (
@@ -46,7 +46,7 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
 export async function logOutgoingFallback(userId, fallbackText, flowId) {
   const query = `
     INSERT INTO messages (
-      id, user_id, whatsapp_message_id, direction, type,
+      id, user_id, message_id, direction, type,
       content, timestamp, flow_id, status, metadata, created_at, updated_at, channel
     ) VALUES (
       $1, $2, $3, $4, $5,

@@ -43,7 +43,7 @@ if (lastIncomingRows.length > 0) {
 
       const outgoingMsg = {
         user_id:             userId,
-        whatsapp_message_id: whatsappMsgId,
+        message_id: whatsappMsgId,
         direction:           'outgoing',
         type,
         content:
@@ -63,7 +63,7 @@ if (lastIncomingRows.length > 0) {
       const insertQuery = `
         INSERT INTO messages (
           user_id,
-          whatsapp_message_id,
+          message_id,
           direction,
           type,
           content,
@@ -261,7 +261,7 @@ fastify.get('/unread-counts', async (req, reply) => {
       const whatsappMsgId = res.data.messages?.[0]?.id || null;
       const outgoingMsg = {
         user_id:             userId,
-        whatsapp_message_id: whatsappMsgId,
+        message_id: whatsappMsgId,
         direction:           'outgoing',
         type:                'template',
         content:             templateName,
@@ -279,7 +279,7 @@ fastify.get('/unread-counts', async (req, reply) => {
       const { rows: tplRows } = await dbPool.query(
         `
         INSERT INTO messages (
-          user_id, whatsapp_message_id, direction, type, content,
+          user_id, message_id, direction, type, content,
           timestamp, flow_id, agent_id, queue_id, status,
           metadata, created_at, updated_at, channel
         ) VALUES (

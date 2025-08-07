@@ -17,7 +17,7 @@ export async function distribuirTicket(userId, queueName) {
       direction,
       content,
       timestamp,
-      whatsapp_message_id
+      message_id
     ) VALUES (
       $1, 'system', 'system', $2, NOW(), $3
     )

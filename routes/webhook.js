@@ -155,7 +155,7 @@ export default async function webhookRoutes(fastify) {
       try {
         const { rows: [insertedMessage] } = await dbPool.query(`
           INSERT INTO messages (
-            user_id, whatsapp_message_id, direction, type, content,
+            user_id, message_id, direction, type, content,
             timestamp, flow_id, reply_to, status, metadata,
             created_at, updated_at, channel
           ) VALUES (
@@ -176,7 +176,7 @@ export default async function webhookRoutes(fastify) {
     SELECT id FROM messages
     WHERE user_id = $1
       AND direction = 'incoming'
-      AND whatsapp_message_id != $2
+      AND message_id != $2
       AND status != 'read'
     ORDER BY timestamp DESC
     LIMIT 1
