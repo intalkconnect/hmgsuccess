@@ -29,31 +29,90 @@ async function ticketsRoutes(fastify, options) {
     }
   });
 
-  fastify.get('/user/:user_id', async (req, reply) => {
-  const { user_id } = req.params;
+  fastify.get('/user/:user_id', {
+  schema: {
+    params: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'string' }, // sem regex de email; aceita qualquer ID
+      },
+      required: ['user_id'],
+      additionalProperties: false
+    },
+    querystring: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['open', 'closed', 'all'], default: 'closed' },
+        limit:  { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+        offset: { type: 'integer', minimum: 0, default: 0 },
+      },
+      additionalProperties: false
+    }
+  }
+}, async (req, reply) => {
+  const { user_id } = req.params as { user_id: string };
+  const { status = 'closed', limit = 50, offset = 0 } = req.query as {
+    status?: 'open' | 'closed' | 'all',
+    limit?: number,
+    offset?: number
+  };
 
   try {
+    // Monta filtro de status de forma segura (parametrizado)
+    const statusFilter =
+      status === 'all' ? '' : 'AND status = $2';
+
+    const params = status === 'all'
+      ? [user_id, limit, offset]
+      : [user_id, status, limit, offset];
+
     const { rows } = await dbPool.query(
-      `SELECT id, ticket_number, user_id, created_at 
-       FROM tickets
-       WHERE user_id = $1 AND status = 'closed'
-       ORDER BY created_at DESC`,
-      [user_id]
+      `
+        SELECT id, ticket_number, user_id, created_at, status
+        FROM tickets
+        WHERE user_id = $1
+        ${statusFilter}
+        ORDER BY created_at DESC
+        LIMIT $${status === 'all' ? 2 : 3}
+        OFFSET $${status === 'all' ? 3 : 4}
+      `,
+      params
     );
 
-    if (rows.length === 0) {
-      return reply.code(404).send({ error: 'Nenhum ticket aberto encontrado' });
-    }
+    // Conta total (para paginação no front)
+    const countParams = status === 'all' ? [user_id] : [user_id, status];
+    const countFilter  = status === 'all' ? '' : 'AND status = $2';
+    const { rows: countRows } = await dbPool.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM tickets
+        WHERE user_id = $1
+        ${countFilter}
+      `,
+      countParams
+    );
 
-    return reply.send({ tickets: rows });
-  } catch (error) {
-    fastify.log.error('Erro ao buscar tickets:', error);
+    const total = countRows?.[0]?.total ?? 0;
+
+    return reply.send({
+      tickets: rows,            // pode vir []
+      meta: {
+        total,                  // total de registros nesse filtro
+        limit,
+        offset,
+        status
+      }
+    });
+  } catch (error: any) {
+    req.log.error({ err: error }, 'Erro ao buscar tickets');
     return reply.code(500).send({
-      error: 'Erro interno ao buscar tickets',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Erro interno ao buscar tickets'
+      // nada de details em produção; se quiser, exponha só em dev:
+      // details: process.env.NODE_ENV === 'development' ? String(error?.message) : undefined
     });
   }
 });
+
 
 
   // PUT /tickets/:user_id → Atualiza status, fila ou assigned_to
