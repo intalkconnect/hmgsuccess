@@ -10,105 +10,118 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // ENVIO DE MENSAGENS COMUNS
   // ───────────────────────────────────────────────
-  fastify.post('/send', async (req, reply) => {
-    const { to, type, content, context } = req.body;
-    const userId = `${to}@w.msgcli.net`;
+  import { sendMessageByChannel, getChannelByUserId } from '../adapters/messenger.js'
+// ...ou ajuste o import se a estrutura da pasta mudar
 
-    // 🔍 Verifica última mensagem incoming para controle da janela de 24h
-const { rows: lastIncomingRows } = await dbPool.query(`
-  SELECT timestamp
-  FROM messages
-  WHERE user_id = $1
-    AND direction = 'incoming'
-  ORDER BY timestamp DESC
-  LIMIT 1
-`, [userId]);
+fastify.post('/send', async (req, reply) => {
+  let { to, type, content, context, user_id, channel } = req.body
 
-if (lastIncomingRows.length > 0) {
-  const lastIncomingTime = new Date(lastIncomingRows[0].timestamp);
-  const now = new Date();
-  const hoursDiff = (now - lastIncomingTime) / (1000 * 60 * 60);
+  // Gera user_id padronizado se não veio do front
+  user_id = user_id || (channel === 'telegram'
+    ? `${to}@telegram`
+    : `${to}@w.msgcli.net` // padrão WhatsApp
+  )
+  // Descobre canal a partir do user_id ou do campo explícito
+  channel = channel || getChannelByUserId(user_id)
+  to = user_id.split('@')[0]
 
-  if (hoursDiff > 24) {
-    return reply.code(400).send({
-      error: 'Fora da janela de 24h. Envie um template aprovado.'
-    });
-  }
-}
+  // REGRA 24H (apenas para WhatsApp)
+  if (channel === 'whatsapp') {
+    const { rows: lastIncomingRows } = await dbPool.query(`
+      SELECT timestamp
+      FROM messages
+      WHERE user_id = $1
+        AND direction = 'incoming'
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `, [user_id])
 
-    
-    try {
-      const result = await sendWhatsappMessage({ to, type, content, context });
-      const whatsappMsgId = result.messages?.[0]?.id || null;
-
-      const outgoingMsg = {
-        user_id:             userId,
-        message_id: whatsappMsgId,
-        direction:           'outgoing',
-        type,
-        content:
-          type === 'text' && typeof content === 'object' && content.body
-            ? content.body
-            : JSON.stringify(content),
-        timestamp:           new Date().toISOString(),
-        flow_id:             null,
-        reply_to:            context?.message_id || null,
-        status:              'sent',
-        metadata:            null,
-        created_at:          new Date().toISOString(),
-        updated_at:          new Date().toISOString(),
-        channel:             'whatsapp',
-      };
-
-      const insertQuery = `
-        INSERT INTO messages (
-          user_id,
-          message_id,
-          direction,
-          type,
-          content,
-          timestamp,
-          flow_id,
-          reply_to,
-          status,
-          metadata,
-          created_at,
-          updated_at,
-          channel
-        ) VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10,
-          $11, $12, $13
-        )
-        RETURNING *;
-      `;
-      const values = Object.values(outgoingMsg);
-      const { rows } = await dbPool.query(insertQuery, values);
-      const mensagemInserida = rows[0];
-
-      if (fastify.io) {
-        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida);
-        fastify.io.emit('new_message', mensagemInserida);
-        fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
+    if (lastIncomingRows.length > 0) {
+      const lastIncomingTime = new Date(lastIncomingRows[0].timestamp)
+      const now = new Date()
+      const hoursDiff = (now - lastIncomingTime) / (1000 * 60 * 60)
+      if (hoursDiff > 24) {
+        return reply.code(400).send({
+          error: 'Fora da janela de 24h. Envie um template aprovado.'
+        })
       }
+    }
+  }
 
-      return reply.code(200).send(result);
-    } catch (err) {
-      const errorData = err.response?.data || err.message;
-      fastify.log.error('[messageRoutes] Erro ao enviar outgoing WhatsApp:', errorData);
+  try {
+    // Dispara via adapter
+    const result = await sendMessageByChannel(channel, to, type, content, context)
 
-      // Regra 24h (fora da janela)
-      if (
+    // ID da mensagem (cada canal pode retornar de um jeito)
+    let canalMsgId = null
+    if (channel === 'whatsapp') {
+      canalMsgId = result.messages?.[0]?.id || null
+    } else if (channel === 'telegram') {
+      canalMsgId = result.data?.result?.message_id || result.data?.message_id || null
+    }
+    // Adapte para outros canais se necessário
+
+    // Monta objeto para salvar
+    const outgoingMsg = {
+      user_id,
+      message_id: canalMsgId,
+      direction: 'outgoing',
+      type,
+      content: type === 'text' && typeof content === 'object' && content.body
+        ? content.body
+        : JSON.stringify(content),
+      timestamp: new Date().toISOString(),
+      flow_id: null,
+      reply_to: context?.message_id || null,
+      status: 'sent',
+      metadata: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      channel,
+    }
+
+    // Salva no banco
+    const insertQuery = `
+      INSERT INTO messages (
+        user_id, message_id, direction, type, content,
+        timestamp, flow_id, reply_to, status, metadata,
+        created_at, updated_at, channel
+      ) VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10,
+        $11, $12, $13
+      ) RETURNING *;
+    `
+    const values = Object.values(outgoingMsg)
+    const { rows } = await dbPool.query(insertQuery, values)
+    const mensagemInserida = rows[0]
+
+    if (fastify.io) {
+      fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida)
+      fastify.io.emit('new_message', mensagemInserida)
+      fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida)
+    }
+
+    return reply.code(200).send(result)
+  } catch (err) {
+    const errorData = err.response?.data || err.message
+    fastify.log.error('[messageRoutes] Erro ao enviar outgoing:', errorData)
+
+    // Regra 24h (fora da janela) para WhatsApp
+    if (
+      channel === 'whatsapp' && (
         errorData?.error?.message?.includes('outside the allowed window') ||
         errorData?.error?.code === 131047
-      ) {
-        return reply.code(400).send({
-          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
-        });
-      }
-      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
+      )
+    ) {
+      return reply.code(400).send({
+        error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
+      })
     }
-  });
+    return reply.code(500).send({ error: 'Erro ao enviar mensagem' })
+  }
+})
+
 
   // ───────────────────────────────────────────────
 // VERIFICAR SE ESTÁ DENTRO DA JANELA DE 24 HORAS
@@ -336,5 +349,6 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
 
 
