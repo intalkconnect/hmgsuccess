@@ -1,7 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { uploadMediaToWhatsapp } from './wa/uploadMediaToWhatsapp.js';
-import { sendTypingIndicator } from './wa/sendTypingIndicator.js';
+import { uploadMediaToWhatsapp } from '../services/wa/uploadMediaToWhatsapp.js';
+import { sendTypingIndicator } from '../services/wa/sendTypingIndicator.js';
 
 dotenv.config();
 
