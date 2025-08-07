@@ -8,7 +8,7 @@ export default async function telegramWebhook(fastify) {
   const io = fastify.io
 
   // Telegram SEM rota GET, só POST para receber updates
-  fastify.post('/webhook/telegram', async (req, reply) => {
+  fastify.post('/', async (req, reply) => {
     const update = req.body
     if (!update.message) return reply.send('IGNORADO')
 
