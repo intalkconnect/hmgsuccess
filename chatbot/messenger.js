@@ -1,11 +1,10 @@
-import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
-import { sendTelegramMessage } from '../services/sendTelegramMessage.js';
+import { sendWhatsappMessage } from '../adapters/sendWhatsappMessage.js';
+import { sendTelegramMessage } from '../adapters/sendTelegramMessage.js';
 
 export async function sendMessageByChannel(channel, to, type, content, context) {
-  if (channel === 'webchat') {
-    return sendWebchatMessage({ to, content });
-  }
+  // if (channel === 'webchat') {
+  //   return sendWebchatMessage({ to, content });
+  // }
 
   if (channel === 'telegram') {
     return sendTelegramMessage(to, typeof content === 'string' ? content : JSON.stringify(content));
