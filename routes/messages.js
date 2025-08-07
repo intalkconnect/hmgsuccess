@@ -1,7 +1,7 @@
 // src/routes/messageRoutes.js
 import dotenv from 'dotenv';
 import { dbPool } from '../services/db.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+import { sendMessageByChannel, getChannelByUserId } from '../adapters/messenger.js'
 import axios from 'axios';
 
 dotenv.config();
@@ -336,4 +336,5 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
 
