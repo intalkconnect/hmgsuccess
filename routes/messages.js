@@ -7,11 +7,6 @@ import axios from 'axios';
 dotenv.config();
 
 export default async function messageRoutes(fastify, opts) {
-  // ───────────────────────────────────────────────
-  // ENVIO DE MENSAGENS COMUNS
-  // ───────────────────────────────────────────────
-  import { sendMessageByChannel, getChannelByUserId } from '../adapters/messenger.js'
-// ...ou ajuste o import se a estrutura da pasta mudar
 
 fastify.post('/send', async (req, reply) => {
   let { to, type, content, context, user_id, channel } = req.body
@@ -349,6 +344,7 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
 
 
 
