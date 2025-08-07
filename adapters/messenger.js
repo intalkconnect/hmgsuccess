@@ -1,20 +1,22 @@
-import { sendWhatsappMessage } from './sendWhatsappMessage.js'
-import { sendTelegramMessage } from './sendTelegramMessage.js'
+// adapters/messenger.js
+import { sendWhatsappMessage } from './sendWhatsappMessage.js';
+import { sendTelegramMessage } from './sendTelegramMessage.js';
 
 export async function sendMessageByChannel(channel, to, type, content, context) {
-  switch (channel) {
-    case 'whatsapp':
-      return sendWhatsappMessage({ to, type, content, context })
-    case 'telegram':
-      return sendTelegramMessage({ to, type, content, context })
-    default:
-      throw new Error('Canal não suportado: ' + channel)
+  if (channel === 'telegram') {
+    return sendTelegramMessage(to, content, context, type);
   }
+
+  let whatsappContent = type === 'text' && typeof content === 'string'
+    ? { body: content }
+    : content;
+
+  return sendWhatsappMessage({ to, type, content: whatsappContent, context });
 }
 
 export function getChannelByUserId(userId) {
-  if (userId.endsWith('@w.msgcli.net')) return 'whatsapp'
-  if (userId.endsWith('@telegram')) return 'telegram'
-  // Adicione mais canais depois
-  return 'desconhecido'
+  if (userId.endsWith('@telegram')) return 'telegram';
+  if (userId.endsWith('@webchat')) return 'webchat';
+  if (userId.endsWith('@w.msgcli.net')) return 'whatsapp';
+  return 'desconhecido'; // fallback padrão
 }
