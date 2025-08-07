@@ -29,6 +29,7 @@ async function ticketsRoutes(fastify, options) {
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
+  }
   });
 
   fastify.get('/user/:user_id', async (req, reply) => {
