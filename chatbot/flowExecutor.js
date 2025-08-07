@@ -13,7 +13,7 @@ import { distribuirTicket } from './ticketManager.js';
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = rawUserId;
 
-  const channel = getChannelByUserId(userId);
+  const channel = vars.channel;
 
   // Se não houver fluxo válido, retorna mensagem de erro
   if (!flow || !flow.blocks || !flow.start) {
