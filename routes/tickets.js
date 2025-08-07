@@ -7,8 +7,6 @@ async function ticketsRoutes(fastify, options) {
   fastify.get('/:user_id', async (req, reply) => {
     const { user_id } = req.params;
 
- 
-
     try {
       const { rows } = await dbPool.query(
         `SELECT status, fila, assigned_to
@@ -29,7 +27,7 @@ async function ticketsRoutes(fastify, options) {
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-  
+  }
   });
 
   fastify.get('/user/:user_id', async (req, reply) => {
