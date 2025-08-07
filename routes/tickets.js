@@ -2,19 +2,10 @@ import { dbPool } from '../services/db.js';
 
 async function ticketsRoutes(fastify, options) {
   // Validação simples do formato do user_id
-  function isValidUserId(user_id) {
-    return /^[\w\d]+@[\w\d.-]+$/.test(user_id);
-  }
 
   // GET /tickets/:user_id → Consulta ticket
   fastify.get('/:user_id', async (req, reply) => {
     const { user_id } = req.params;
-
-    if (!isValidUserId(user_id)) {
-      return reply.code(400).send({
-        error: 'Formato de user_id inválido. Use: usuario@dominio',
-      });
-    }
 
     try {
       const { rows } = await dbPool.query(
@@ -40,12 +31,6 @@ async function ticketsRoutes(fastify, options) {
 
   fastify.get('/user/:user_id', async (req, reply) => {
   const { user_id } = req.params;
-
-  if (!isValidUserId(user_id)) {
-    return reply.code(400).send({
-      error: 'Formato de user_id inválido. Use: usuario@dominio',
-    });
-  }
 
   try {
     const { rows } = await dbPool.query(
@@ -75,12 +60,6 @@ async function ticketsRoutes(fastify, options) {
   fastify.put('/:user_id', async (req, reply) => {
     const { user_id } = req.params;
     const { status, fila, assigned_to } = req.body;
-
-    if (!isValidUserId(user_id)) {
-      return reply.code(400).send({
-        error: 'Formato de user_id inválido. Use: usuario@dominio',
-      });
-    }
 
     if (!status && !fila && !assigned_to) {
       return reply.code(400).send({
