@@ -1,22 +1,25 @@
-// adapters/messenger.js
+import { splitUserId } from '../utils/identity.js';
 import { sendWhatsappMessage } from './sendWhatsappMessage.js';
 import { sendTelegramMessage } from './sendTelegramMessage.js';
 
-export async function sendMessageByChannel(channel, to, type, content, context) {
+export async function sendMessage(payload) {
+  // payload: { user_id, type, content, context }
+  const { user_id, type, content, context } = payload;
+  const { id, channel, suffix } = splitUserId(user_id);
+
   if (channel === 'telegram') {
-    return sendTelegramMessage(to, content, context, type);
+    // Telegram espera chat_id "puro"
+    return sendTelegramMessage(id, content, context, type);
   }
 
-  let whatsappContent = type === 'text' && typeof content === 'string'
-    ? { body: content }
-    : content;
+  if (channel === 'whatsapp') {
+    // WhatsApp Cloud API espera { to, type, ... }
+    let normalized = content;
+    if (type === 'text' && typeof content === 'string') {
+      normalized = { body: content };
+    }
+    return sendWhatsappMessage({ to: id, type, content: normalized, context });
+  }
 
-  return sendWhatsappMessage({ to, type, content: whatsappContent, context });
-}
-
-export function getChannelByUserId(userId) {
-  if (userId.endsWith('@telegram')) return 'telegram';
-  if (userId.endsWith('@webchat')) return 'webchat';
-  if (userId.endsWith('@w.msgcli.net')) return 'whatsapp';
-  return 'desconhecido'; // fallback padrão
+  throw new Error(`Canal não suportado: ${suffix}`);
 }
