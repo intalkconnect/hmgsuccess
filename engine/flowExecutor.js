@@ -141,12 +141,16 @@ return;
       // Tenta enviar e registrar
       try {
         // 4.4.1) Envia a mensagem ao usuário
-        await sendMessageByChannel(
-          sessionVars.channel || 'whatsapp',
-          userId,
-          block.type,
-          content
-        );
+const messageContent = typeof content === 'string' 
+  ? { text: content } 
+  : content;
+
+await sendMessageByChannel(
+  sessionVars.channel || CHANNELS.WHATSAPP,
+  userId,
+  block.type,
+  messageContent
+);
 
         // 4.4.2) Registra no banco como “outgoing”
         console.log('[flowExecutor] Gravando outgoing:', {
