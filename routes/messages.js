@@ -2,6 +2,8 @@
 import dotenv from 'dotenv';
 import { dbPool } from '../services/db.js';
 import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
+  const identity = await import('../utils/identity.js');
+  const { normalizeChannel, makeUserId, splitUserId } = identity;
 import axios from 'axios';
 
 dotenv.config();
@@ -12,35 +14,49 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   // routes/messageRoutes.js (trecho /send universal)
   fastify.post('/send', async (req, reply) => {
+    // 🔎 loga o corpo recebido (sem segredos)
+    fastify.log.info({ body: req.body }, '[messages] /send payload');
+
+    let user_id, to, channel, type, content, context;
     try {
-      let { user_id, to, channel, type, content, context } = req.body || {};
+      ({ user_id, to, channel, type, content, context } = req.body || {});
+    } catch (e) {
+      fastify.log.error(e, '[messages] JSON inválido');
+      return reply.code(400).send({ error: 'JSON inválido' });
+    }
 
-      // 🔎 Identidade: aceita user_id OU (to + channel)
-      if (!user_id) {
-        if (!to || !channel) {
-          return reply.code(400).send({ error: 'Informe user_id OU to+channel' });
-        }
-        user_id = makeUserId(String(to), normalizeChannel(channel));
+    // ✅ aceitar user_id OU (to + channel). Se não vier channel, assume WhatsApp
+    if (!user_id) {
+      if (!to) {
+        return reply.code(400).send({ error: 'Informe user_id OU to (+ channel opcional)' });
       }
+      user_id = makeUserId(String(to), normalizeChannel(channel || '@w.msgcli.net'));
+    }
 
-      if (!type) return reply.code(400).send({ error: 'type é obrigatório' });
-      if (content == null) return reply.code(400).send({ error: 'content é obrigatório' });
+    // validações básicas
+    if (!type) return reply.code(400).send({ error: 'type é obrigatório' });
+    if (content == null) return reply.code(400).send({ error: 'content é obrigatório' });
 
-      const { channel: chName, suffix } = splitUserId(user_id);
+    // resolve canal/sufixo
+    const { channel: chName, suffix } = splitUserId(user_id);
+    if (suffix === '@') {
+      // caso bizarro tipo user_id = "undefined"
+      return reply.code(400).send({ error: 'user_id inválido' });
+    }
 
-      // ⏱️ Regra de 24h apenas para WhatsApp
-      if (chName === 'whatsapp') {
+    // ⏱️ Regra de 24h só para WhatsApp
+    if (chName === 'whatsapp') {
+      try {
         const { rows } = await dbPool.query(
           `
-          SELECT timestamp
-          FROM messages
-          WHERE user_id = $1 AND direction = 'incoming'
-          ORDER BY timestamp DESC
-          LIMIT 1
-        `,
+            SELECT timestamp
+            FROM messages
+            WHERE user_id = $1 AND direction = 'incoming'
+            ORDER BY timestamp DESC
+            LIMIT 1
+          `,
           [user_id]
         );
-
         if (rows.length) {
           const hours = (Date.now() - new Date(rows[0].timestamp).getTime()) / 36e5;
           if (hours > 24) {
@@ -49,40 +65,59 @@ export default async function messageRoutes(fastify, opts) {
             });
           }
         }
+      } catch (e) {
+        fastify.log.error({ e, user_id }, '[messages] erro ao checar janela 24h');
+        return reply.code(500).send({ error: 'Erro ao validar janela de 24h' });
       }
+    }
 
-      // 🚀 Envia via roteador único (decide pelo sufixo do user_id)
-      const result = await sendMessage({ user_id, type, content, context });
+    // 🚀 Envio para o provedor
+    let result;
+    try {
+      if (type === 'text' && typeof content === 'string') {
+        // normaliza string -> { body }
+        content = { body: content };
+      }
+      result = await sendMessage({ user_id, type, content, context });
+    } catch (sendErr) {
+      fastify.log.error({ sendErr, user_id, type }, '[messages] sendMessage falhou');
+      return reply.code(502).send({
+        error: 'Falha ao enviar para o provedor',
+        details: sendErr?.message || 'erro desconhecido'
+      });
+    }
 
-      // 🆔 Tenta capturar o ID da plataforma (WA/Telegram)
-      const platformMsgId =
-        result?.messages?.[0]?.id ||      // WhatsApp Cloud
-        result?.result?.message_id ||     // Telegram (payload padrão)
-        result?.message_id ||             // fallback
-        null;
+    // 🆔 extrai ID da plataforma
+    const platformMsgId =
+      result?.messages?.[0]?.id ||      // WhatsApp Cloud
+      result?.result?.message_id ||     // Telegram (se vier assim)
+      result?.message_id ||             // fallback
+      null;
 
-      // 🗄️ Normaliza "content" para gravação (preferir texto cru em text)
-      const storedContent =
-        type === 'text'
-          ? (typeof content === 'object' ? (content.body ?? JSON.stringify(content)) : String(content))
-          : (typeof content === 'string' ? content : JSON.stringify(content));
+    // 🗄️ conteúdo “bonitinho” pra salvar
+    const storedContent =
+      type === 'text'
+        ? (typeof content === 'object' ? (content.body ?? JSON.stringify(content)) : String(content))
+        : (typeof content === 'string' ? content : JSON.stringify(content));
 
-      const outgoingMsg = {
-        user_id,
-        message_id: platformMsgId,
-        direction: 'outgoing',
-        type,
-        content: storedContent,
-        timestamp: new Date().toISOString(),
-        flow_id: null,
-        reply_to: context?.message_id || null,
-        status: 'sent',
-        metadata: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        channel: suffix, // 👈 sempre grava o sufixo (@w.msgcli.net, @telegram, @webchat)
-      };
+    const outgoingMsg = {
+      user_id,
+      message_id: platformMsgId,
+      direction: 'outgoing',
+      type,
+      content: storedContent,
+      timestamp: new Date().toISOString(),
+      flow_id: null,
+      reply_to: context?.message_id || null,
+      status: 'sent',
+      metadata: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      channel: suffix // sempre sufixo (@w.msgcli.net, @telegram, @webchat)
+    };
 
+    // 💾 insere no banco
+    try {
       const insertQuery = `
         INSERT INTO messages (
           user_id, message_id, direction, type, content,
@@ -98,30 +133,16 @@ export default async function messageRoutes(fastify, opts) {
       const { rows: [mensagemInserida] } = await dbPool.query(insertQuery, Object.values(outgoingMsg));
 
       if (fastify.io && mensagemInserida) {
-        fastify.log.info('[messageRoutes] Emitindo new_message (outgoing):', mensagemInserida);
         fastify.io.emit('new_message', mensagemInserida);
         fastify.io.to(`chat-${mensagemInserida.user_id}`).emit('new_message', mensagemInserida);
       }
-
-      return reply.code(200).send(result);
-    } catch (err) {
-      const errorData = err?.response?.data || err?.message || err;
-      fastify.log.error('[messageRoutes] Erro ao enviar outgoing:', errorData);
-
-      // Mensagens fora da janela (retorno típico do WhatsApp Cloud)
-      if (
-        errorData?.error?.message?.includes('outside the allowed window') ||
-        errorData?.error?.code === 131047
-      ) {
-        return reply.code(400).send({
-          error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
-        });
-      }
-
-      return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
+    } catch (dbErr) {
+      // não derruba o envio pro cliente; só loga
+      fastify.log.error({ dbErr, user_id }, '[messages] erro ao gravar outgoing');
     }
-  });
 
+    return reply.code(200).send(result);
+  });
 
 
   // ───────────────────────────────────────────────
@@ -350,5 +371,6 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
 
 
