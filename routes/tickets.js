@@ -57,7 +57,7 @@ async function ticketsRoutes(fastify, options) {
     );
 
     if (rows.length === 0) {
-      return reply.code(404).send({ error: 'Nenhum ticket aberto encontrado' });
+      return reply.code(204).send({ error: 'Nenhum ticket fechado encontrado' });
     }
 
     return reply.send({ tickets: rows });
