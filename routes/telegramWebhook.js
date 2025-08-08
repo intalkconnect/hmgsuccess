@@ -98,13 +98,13 @@ export default async function telegramWebhook(fastify) {
       io?.to(`chat-${formattedUserId}`).emit('bot_processing', { user_id: formattedUserId, status: 'processing' });
 
       // Executa o fluxo — **garanta** que o retorno preserve user_id/channel
-      const outgoingMessage = await runFlow({
-        message: userMessage.toLowerCase(),
-        flow: null, // ou latestFlow?.data
-        vars,
-        rawUserId: from,
-        io,
-      });
+const outgoingMessage = await runFlow({
+  message: userMessage?.toLowerCase?.() || userMessage,
+  flow: null,
+  vars,
+  rawUserId: formattedUserId, // já mando com sufixo
+  io,
+});
 
       if (io && outgoingMessage?.user_id) {
         // Se o fluxo não definiu user_id, força:
