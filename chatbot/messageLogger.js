@@ -1,7 +1,9 @@
 import { dbPool } from '../services/db.js'
 import { randomUUID } from 'crypto'
 
+import { splitUserId } from '../utils/identity.js';
 export async function logOutgoingMessage(userId, type, content, flowId) {
+  const { suffix } = splitUserId(userId);
   const query = `
     INSERT INTO messages (
       user_id, message_id, direction, type, content,
@@ -26,7 +28,7 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
     null, // metadata
     new Date().toISOString(),
     new Date().toISOString(),
-    'whatsapp'
+    suffix
   ];
 
   try {
@@ -44,6 +46,7 @@ export async function logOutgoingMessage(userId, type, content, flowId) {
  * Grava um "fallback" quando falha no envio de mídia.
  */
 export async function logOutgoingFallback(userId, fallbackText, flowId) {
+  const { suffix } = splitUserId(userId);
   const query = `
     INSERT INTO messages (
       id, user_id, message_id, direction, type,
@@ -68,7 +71,7 @@ export async function logOutgoingFallback(userId, fallbackText, flowId) {
     JSON.stringify({ fallback: true }),
     new Date().toISOString(),
     new Date().toISOString(),
-    'whatsapp'
+    suffix
   ];
 
   try {
