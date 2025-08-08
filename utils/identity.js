@@ -1,13 +1,32 @@
 // src/utils/identity.js
-export const normalizeChannel = (raw) =>
-  String(raw || '').toLowerCase().trim();
-
-export const makeUserId = (id, channel) =>
-  `${String(id).trim()}@${normalizeChannel(channel)}`;
-
-export const parseUserId = (userId) => {
-  const s = String(userId || '');
-  const at = s.lastIndexOf('@');
-  if (at === -1) return { id: s, channel: '' };
-  return { id: s.slice(0, at), channel: s.slice(at + 1) };
+const SUFFIXES = {
+  whatsapp: '@w.msgcli.net',
+  telegram: '@telegram',
+  webchat: '@webchat'
 };
+
+export function normalizeChannel(input) {
+  // aceita 'whatsapp' | '@w.msgcli.net' | 'telegram' | '@telegram' | ...
+  if (!input) return SUFFIXES.whatsapp;
+  const raw = String(input).toLowerCase();
+  if (raw.startsWith('@')) return raw;
+  return SUFFIXES[raw] || raw;
+}
+
+export function suffixToChannelName(suffix) {
+  // '@telegram' -> 'telegram'; '@w.msgcli.net' -> 'whatsapp'
+  const entry = Object.entries(SUFFIXES).find(([, s]) => s === suffix);
+  return entry ? entry[0] : 'desconhecido';
+}
+
+export function makeUserId(id, channelOrSuffix) {
+  const suffix = normalizeChannel(channelOrSuffix);
+  return `${String(id)}${suffix}`;
+}
+
+export function splitUserId(userId) {
+  // '123@telegram' => { id:'123', suffix:'@telegram', channel:'telegram' }
+  const [id, ...rest] = String(userId).split('@');
+  const suffix = '@' + rest.join('@');
+  return { id, suffix, channel: suffixToChannelName(suffix) };
+}
