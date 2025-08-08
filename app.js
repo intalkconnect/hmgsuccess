@@ -4,7 +4,8 @@ import multipart from '@fastify/multipart'
 import dotenv from 'dotenv'
 import { Server as IOServer } from 'socket.io'
 
-import webhookRoutes from './routes/webhook.js'
+import whatsappWebhook from './routes/whatsappWebhook.js'
+import telegramWebhook from './routes/telegramWebhook.js';
 import messageRoutes from './routes/messages.js'
 import flowRoutes from './routes/flow.js'
 import uploadRoutes from './routes/uploadRoutes.js'
@@ -91,7 +92,8 @@ async function start() {
   })
 
 fastify.log.info('[start] Registrando rotas...')
-fastify.register(webhookRoutes, { prefix: '/webhook' }) // permanece
+fastify.register(whatsappWebhook, { prefix: '/whatsapp' }) // permanece
+fastify.register(telegramWebhook, { prefix: '/telegram' }) // permanece
 fastify.register(messageRoutes, { prefix: '/api/v1/messages' })
 fastify.register(chatsRoutes, { prefix: '/api/v1/chats' })
 fastify.register(flowRoutes, { prefix: '/api/v1/flow' })
@@ -116,3 +118,4 @@ fastify.log.info('[start] Rotas registradas com sucesso.')
 }
 
 start()
+
