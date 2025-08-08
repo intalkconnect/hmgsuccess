@@ -11,11 +11,6 @@ export default async function messageRoutes(fastify, opts) {
   // ENVIO DE MENSAGENS COMUNS
   // ───────────────────────────────────────────────
   // routes/messageRoutes.js (trecho /send universal)
-import { dbPool } from '../services/db.js';
-import { sendMessage } from '../adapters/messenger.js';
-import { normalizeChannel, makeUserId, splitUserId } from '../utils/identity.js';
-
-export default async function messageRoutes(fastify) {
   fastify.post('/send', async (req, reply) => {
     try {
       let { user_id, to, channel, type, content, context } = req.body || {};
@@ -126,7 +121,7 @@ export default async function messageRoutes(fastify) {
       return reply.code(500).send({ error: 'Erro ao enviar mensagem' });
     }
   });
-}
+
 
 
   // ───────────────────────────────────────────────
@@ -355,4 +350,5 @@ fastify.get('/unread-counts', async (req, reply) => {
     }
   });
 }
+
 
