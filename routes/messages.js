@@ -36,100 +36,150 @@ export default async function messageRoutes(fastify, opts) {
   // ───────────────────────────────────────────────
   fastify.post('/send', async (req, reply) => {
     const { to, type, content, context, channel = 'whatsapp' } = req.body;
-    const userId = formatUserId(to, channel);
-
+    
     try {
-      // Verificação de janela de 24h apenas para WhatsApp
+      // Validate input
+      if (!to) throw new Error('Recipient is required');
+      if (!type) throw new Error('Message type is required');
+      
+      validateContent(type, content, channel);
+      
+      const userId = formatUserId(to, channel);
+
+      // Check 24h window only for WhatsApp
       if (channel === 'whatsapp') {
-        const within24h = await check24hWindow(userId);
-        if (!within24h) {
-          return reply.code(400).send({
-            error: 'Fora da janela de 24h. Envie um template aprovado.'
-          });
+        const { rows } = await dbPool.query(
+          `SELECT timestamp FROM messages 
+           WHERE user_id = $1 AND direction = 'incoming'
+           ORDER BY timestamp DESC LIMIT 1`,
+          [userId]
+        );
+
+        if (rows.length > 0) {
+          const lastMsgTime = new Date(rows[0].timestamp);
+          const hoursDiff = (Date.now() - lastMsgTime) / (1000 * 60 * 60);
+          if (hoursDiff > 24) {
+            return reply.code(400).send({
+              error: 'Outside 24h window. Use an approved template.'
+            });
+          }
         }
       }
 
+      // Send message
       let result;
       let messageId;
-
-      // Envio por canal
+      
       if (channel === 'telegram') {
+        // Telegram formatting
+        const telegramContent = type === 'text' 
+          ? content.body 
+          : { 
+              url: content.url,
+              ...(content.caption && { caption: content.caption }),
+              ...(content.filename && { filename: content.filename })
+            };
+
         result = await sendTelegramMessage({
           chatId: to,
           type,
-          content: type === 'text' ? content.body : content
+          content: telegramContent
         });
         messageId = result.message_id;
       } else {
-        // WhatsApp
-        result = await sendWhatsappMessage({ to, type, content, context });
+        // WhatsApp formatting
+        const whatsappContent = type === 'text'
+          ? { body: content.body }
+          : {
+              url: content.url,
+              ...(content.caption && { caption: content.caption }),
+              ...(content.filename && { filename: content.filename })
+            };
+
+        result = await sendWhatsappMessage({
+          to,
+          type,
+          content: whatsappContent,
+          context
+        });
         messageId = result.messages?.[0]?.id;
       }
 
-      // Preparar mensagem para o banco de dados
-      const outgoingMsg = {
-        user_id: userId,
-        message_id: messageId,
-        direction: 'outgoing',
-        type,
-        content: type === 'text' && typeof content === 'object' 
-          ? content.body 
-          : JSON.stringify(content),
-        timestamp: new Date().toISOString(),
-        flow_id: null,
-        reply_to: context?.message_id || null,
-        status: 'sent',
-        metadata: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        channel,
-      };
+      // Save to database
+      const dbContent = type === 'text' 
+        ? content.body 
+        : JSON.stringify(content);
 
-      // Inserir no banco de dados
-      const { rows } = await dbPool.query(`
-        INSERT INTO messages (
+      const { rows } = await dbPool.query(
+        `INSERT INTO messages (
           user_id, message_id, direction, type, content,
           timestamp, flow_id, reply_to, status, metadata,
           created_at, updated_at, channel
-        ) VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10,
-          $11, $12, $13
-        ) RETURNING *;
-      `, Object.values(outgoingMsg));
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING *`,
+        [
+          userId,
+          messageId,
+          'outgoing',
+          type,
+          dbContent,
+          new Date().toISOString(),
+          null,
+          context?.message_id || null,
+          'sent',
+          null,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          channel
+        ]
+      );
 
-      const insertedMessage = rows[0];
+      const savedMessage = rows[0];
 
-      // Emitir via Socket.IO se disponível
+      // Broadcast via Socket.IO if available
       if (fastify.io) {
-        fastify.io.emit('new_message', insertedMessage);
-        fastify.io.to(`chat-${userId}`).emit('new_message', insertedMessage);
+        fastify.io.emit('new_message', savedMessage);
+        fastify.io.to(`chat-${userId}`).emit('new_message', savedMessage);
       }
 
-      return reply.code(200).send(result);
-
-    } catch (err) {
-      fastify.log.error(`[messageRoutes] Erro ao enviar mensagem (${channel}):`, err.response?.data || err.message);
-
-      // Tratamento específico para erros do WhatsApp
-      if (channel === 'whatsapp') {
-        const errorData = err.response?.data?.error;
-        if (errorData?.code === 131047 || errorData?.message?.includes('24-hour window')) {
-          return reply.code(400).send({
-            error: 'Mensagem fora da janela de 24 horas. Envie um template aprovado.',
-          });
-        }
-        if (errorData?.code === 131030) {
-          return reply.code(400).send({
-            error: 'Número não permitido. Adicione à lista de teste no Meta Developer.',
-          });
-        }
-      }
-
-      return reply.code(500).send({ 
-        error: 'Erro ao enviar mensagem',
-        details: err.response?.data || err.message 
+      return reply.send({
+        success: true,
+        message: savedMessage,
+        channel
       });
+
+    } catch (error) {
+      fastify.log.error(`Message sending failed (${channel}):`, error);
+
+      const errorResponse = {
+        error: 'Message sending failed',
+        details: error.message,
+        channel
+      };
+
+      // Specific error handling
+      if (error.response?.data) {
+        errorResponse.platform_error = error.response.data;
+        
+        // WhatsApp specific errors
+        if (channel === 'whatsapp') {
+          if (error.response.data.error?.code === 131047) {
+            errorResponse.error = 'Message outside 24h window';
+          }
+          if (error.response.data.error?.code === 131030) {
+            errorResponse.error = 'Recipient not in allowed list';
+          }
+        }
+        
+        // Telegram specific errors
+        if (channel === 'telegram') {
+          if (error.response.data.description?.includes('message text is empty')) {
+            errorResponse.error = 'Message text cannot be empty';
+          }
+        }
+      }
+
+      return reply.code(500).send(errorResponse);
     }
   });
 
@@ -299,3 +349,4 @@ export default async function messageRoutes(fastify, opts) {
     }
   });
 }
+
