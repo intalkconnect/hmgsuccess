@@ -1,9 +1,20 @@
 import { dbPool } from '../services/db.js';
 
+function isValidUserId(userId) {
+  return /^[^@]+@[^@]+\.[^@]+$/.test(userId);
+}
+
 async function clientesRoutes(fastify, options) {
   // GET /clientes/:user_id
   fastify.get('/:user_id', async (req, reply) => {
   const { user_id } = req.params;
+
+  if (!isValidUserId(user_id)) {
+    return reply.code(400).send({ 
+      error: 'Formato de user_id inválido. Use: usuario@dominio',
+      user_id
+    });
+  }
 
   try {
     const { rows } = await dbPool.query(
