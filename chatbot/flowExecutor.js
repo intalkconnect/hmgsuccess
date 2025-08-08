@@ -5,15 +5,13 @@ import axios from 'axios';
 import vm from 'vm';
 import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
-import { sendMessageByChannel, getChannelByUserId  } from './messenger.js';
+import { sendMessageByChannel } from './messenger.js';
 import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 import { distribuirTicket } from './ticketManager.js';
 
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
-  const userId = rawUserId;
-
-  const channel = vars.channel;
+  const userId = `${rawUserId}@w.msgcli.net`;
 
   // Se não houver fluxo válido, retorna mensagem de erro
   if (!flow || !flow.blocks || !flow.start) {
@@ -143,13 +141,12 @@ return;
       // Tenta enviar e registrar
       try {
         // 4.4.1) Envia a mensagem ao usuário
-await sendMessageByChannel(
-  channel,
-  userId,
-  block.type,
-  content
-);
-
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          block.type,
+          content
+        );
 
         // 4.4.2) Registra no banco como “outgoing”
         console.log('[flowExecutor] Gravando outgoing:', {
@@ -175,13 +172,12 @@ await sendMessageByChannel(
           : `Aqui está sua mensagem: ${content}`;
 
         // 4.4.3) Envia fallback de texto simples
-await sendMessageByChannel(
-  channel,
-  userId,
-  'text',
-  fallback
-);
-
+        await sendMessageByChannel(
+          sessionVars.channel || 'whatsapp',
+          userId,
+          'text',
+          fallback
+        );
 
         // 4.4.4) Registra fallback como “outgoing”
         console.log('[flowExecutor] Gravando fallback outgoing:', {
