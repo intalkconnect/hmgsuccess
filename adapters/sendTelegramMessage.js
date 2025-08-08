@@ -6,8 +6,8 @@ export async function sendTelegramMessage(to, content, context = null, type = 't
   try {
     // 🔘 Trata mensagens interativas com botões
     if (type === 'interactive') {
-      const text = content?.body?.text || 'Escolha uma opção';
-      const buttons = content?.action?.buttons || [];
+   const text = content?.body?.text || content?.text || 'Escolha uma opção';
+   const buttons = content?.action?.buttons || content?.buttons || [];
 
       const inlineKeyboard = buttons.map(button => [
         {
@@ -29,7 +29,9 @@ export async function sendTelegramMessage(to, content, context = null, type = 't
     }
 
     // 📝 Texto simples
-    const text = typeof content === 'string' ? content : JSON.stringify(content);
+     const text = typeof content === 'string'
+   ? content
+   : (content?.body || JSON.stringify(content));
     const res = await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: to,
       text
