@@ -1,8 +1,9 @@
 // worker.js
 'use strict';
 
-const amqplib = require('amqplib');
-const { processEvent } = require('../services/high/processEvent');
+import 'dotenv/config';
+import amqplib from 'amqplib';
+import { processEvent } from './services/high/processEvent.js';
 
 const AMQP_URL  = process.env.AMQP_URL || process.env.DEFAULT_AMQP_URL || 'amqp://guest:guest@localhost:5672/';
 const QUEUE     = process.env.QUEUE || 'events.incoming';
