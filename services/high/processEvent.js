@@ -1,15 +1,11 @@
-// services/high/processEvent.js (ESM)
-import pg from 'pg';
+// services/high/processEvent.js
 import crypto from 'crypto';
+import { dbPool } from '../db.js';
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
-// marque como opcional se ainda não existir no repo
-import { markMessageAsRead } from '../wa/markMessageAsRead.js'; // ajuste/remoção se necessário
+import { markMessageAsRead } from '../wa/markMessageAsRead.js'; // se não existir no repo, comente esta import e as chamadas
 
-const { Pool } = pg;
-const dbPool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-// ------------ helpers ------------
+// Garante existir message_id para a UNIQUE (channel, message_id, user_id)
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
   if (joined) return joined;
@@ -37,7 +33,7 @@ async function upsertIncomingMessage({ channel, userId, messageId, msgType, cont
             NOW(), NULL, NULL, 'received', NULL,
             NOW(), NOW(), $5)
     ON CONFLICT (channel, message_id, user_id) DO NOTHING
-    RETURNING id
+    RETURNING *
   `, [
     userId,
     messageId,
@@ -45,7 +41,7 @@ async function upsertIncomingMessage({ channel, userId, messageId, msgType, cont
     typeof content === 'string' ? content : JSON.stringify(content),
     channel
   ]);
-  return res.rowCount > 0;
+  return res.rows?.[0]; // undefined => duplicate
 }
 
 async function getActiveFlow() {
@@ -53,8 +49,8 @@ async function getActiveFlow() {
   return rows[0]?.data || null;
 }
 
-// ------------ canais ------------
-async function processWhatsApp(evt) {
+// ------------------- WhatsApp -------------------
+async function processWhatsApp(evt, { io } = {}) {
   const value = evt?.payload?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return 'duplicate';
   const msg = value?.messages?.[0];
@@ -65,7 +61,7 @@ async function processWhatsApp(evt) {
   const formattedUserId = `${from}@w.msgcli.net`;
   const msgType = msg.type;
 
-  const { content, userMessage } = await processMediaIfNeeded('whatsapp', { value, msg });
+  const { content, userMessage } = await processMediaIfNeeded('whatsapp', { msg });
 
   await insertClienteIfAbsent({
     phone: from,
@@ -86,8 +82,19 @@ async function processWhatsApp(evt) {
 
   try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
 
+  // Socket: iguais aos antigos (new_message + bot_processing)
+  if (io) {
+    io.emit('new_message', inserted); // entrada
+    const statusPayload = { user_id: formattedUserId, status: 'processing' };
+    io.emit('bot_processing', statusPayload);
+    // opcional por sala:
+    io.emit(`chat-${formattedUserId}`, inserted);
+    io.emit(`chat-${formattedUserId}`, { type: 'bot_processing', ...statusPayload });
+  }
+
   const activeFlow = await getActiveFlow();
-  await runFlow({
+
+  const outgoingMessage = await runFlow({
     message: (userMessage || '').toLowerCase(),
     flow: activeFlow,
     vars: {
@@ -98,13 +105,20 @@ async function processWhatsApp(evt) {
       now: new Date().toISOString(),
       lastMessageId: msg.id
     },
-    rawUserId: from
+    rawUserId: from,
+    io // se seu runFlow já emite, ele pode usar
   });
+
+  if (io && outgoingMessage?.user_id) {
+    io.emit('new_message', outgoingMessage);
+    io.emit(`chat-${formattedUserId}`, outgoingMessage);
+  }
 
   return 'ok';
 }
 
-async function processTelegram(evt) {
+// ------------------- Telegram -------------------
+async function processTelegram(evt, { io } = {}) {
   const update = evt?.payload;
   if (!update) return 'duplicate';
 
@@ -132,8 +146,17 @@ async function processTelegram(evt) {
   });
   if (!inserted) return 'duplicate';
 
+  if (io) {
+    io.emit('new_message', inserted);
+    const statusPayload = { user_id: userId, status: 'processing' };
+    io.emit('bot_processing', statusPayload);
+    io.emit(`chat-${userId}`, inserted);
+    io.emit(`chat-${userId}`, { type: 'bot_processing', ...statusPayload });
+  }
+
   const activeFlow = await getActiveFlow();
-  await runFlow({
+
+  const outgoingMessage = await runFlow({
     message: (userMessage || '').toLowerCase(),
     flow: activeFlow,
     vars: {
@@ -143,16 +166,24 @@ async function processTelegram(evt) {
       channel: 'telegram',
       now: new Date().toISOString()
     },
-    rawUserId: String(chatId)
+    rawUserId: String(chatId),
+    io
   });
+
+  if (io && outgoingMessage?.user_id) {
+    io.emit('new_message', outgoingMessage);
+    io.emit(`chat-${userId}`, outgoingMessage);
+  }
 
   return 'ok';
 }
 
-export async function processEvent(evt) {
+// ------------------- Router -------------------
+export async function processEvent(evt, { io } = {}) {
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
-  if (ch === 'whatsapp') return processWhatsApp(evt);
-  if (ch === 'telegram') return processTelegram(evt);
+  if (ch === 'whatsapp') return processWhatsApp(evt, { io });
+  if (ch === 'telegram') return processTelegram(evt, { io });
+  // IG/FB podem ser adicionados aqui no mesmo padrão
   return 'ok';
 }
