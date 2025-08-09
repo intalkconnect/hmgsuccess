@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const AMQP_URL = process.env.AMQP_URL || 'amqp://guest:guest@rabbitmq:5672/';
-const OUTGOING_QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outcoming';
+const QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outgoing';
 
 let amqpConn, amqpCh;
 async function ensureAMQP() {
@@ -14,7 +14,7 @@ async function ensureAMQP() {
   amqpConn = await amqplib.connect(AMQP_URL, { heartbeat: 15 });
   amqpConn.on('close', () => { amqpConn = null; amqpCh = null; });
   amqpCh = await amqpConn.createChannel();
-  await amqpCh.assertQueue(OUTGOING_QUEUE, { durable: true });
+  await amqpCh.assertQueue(QUEUE, { durable: true });
   return amqpCh;
 }
 
@@ -93,7 +93,7 @@ export default async function messagesRoutes(fastify) {
     // publica no Rabbit
     const ch = await ensureAMQP();
     ch.sendToQueue(
-      OUTGOING_QUEUE,
+      QUEUE,
       Buffer.from(JSON.stringify({
         tempId,
         channel,
@@ -141,7 +141,7 @@ export default async function messagesRoutes(fastify) {
     // publica no Rabbit (workerOut monta payload do template)
     const ch = await ensureAMQP();
     ch.sendToQueue(
-      OUTGOING_QUEUE,
+      QUEUE,
       Buffer.from(JSON.stringify({
         tempId,
         channel: 'whatsapp',
@@ -227,3 +227,4 @@ export default async function messagesRoutes(fastify) {
     return rows;
   });
 }
+
