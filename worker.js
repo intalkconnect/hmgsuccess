@@ -1,6 +1,7 @@
 // worker.js
 import 'dotenv/config';
 import amqplib from 'amqplib';
+import { initDB } from './services/db.js';
 import { processEvent } from './services/high/processEvent.js';
 import { getIO } from './services/realtime/socketClient.js';
 
@@ -10,7 +11,7 @@ const PREFETCH  = Number(process.env.PREFETCH || 50);
 const MAX_RETRY = Number(process.env.MAX_RETRIES || 5);
 
 let conn, ch, closing = false;
-const io = getIO(); // cliente Socket.IO (best-effort)
+const io = getIO();
 
 const now = () => new Date().toISOString();
 const redact = (u) => String(u).replace(/(\/\/[^:]+:)([^@]+)(@)/, '$1***$3');
@@ -36,7 +37,7 @@ async function onMessage(msg) {
   });
 
   try {
-    const status = await processEvent(evt, { io }); // <<< integra com socket
+    const status = await processEvent(evt, { io });
     if (status === 'duplicate') {
       console.log('♻️ já processado (PG upsert) — ACK');
       ch.ack(msg);
@@ -54,6 +55,11 @@ async function onMessage(msg) {
 async function start() {
   console.log(`🚀 Worker @ ${now()} | AMQP=${redact(AMQP_URL)} | QUEUE=${QUEUE} | PREFETCH=${PREFETCH}`);
 
+  // 1) Inicializa Postgres (usa seu services/db.js)
+  await initDB();
+  console.log('🗄️ Postgres conectado via initDB()');
+
+  // 2) Conecta no Rabbit
   conn = await amqplib.connect(AMQP_URL, { heartbeat: 15 });
   conn.on('error', e => console.error('[amqp conn error]', e));
   conn.on('close', () => { console.warn('[amqp conn closed]'); if (!closing) process.exit(1); });
