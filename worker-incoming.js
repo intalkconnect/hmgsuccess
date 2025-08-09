@@ -6,7 +6,7 @@ import { processEvent } from './services/high/processEvent.js';
 import { getIO } from './services/realtime/socketClient.js';
 
 const AMQP_URL  = process.env.AMQP_URL || 'amqp://guest:guest@localhost:5672/';
-const QUEUE = process.env.INGOING_QUEUE || 'hmg.incoming';
+const QUEUE = process.env.INCOMING || 'hmg.incoming';
 const PREFETCH  = Number(process.env.PREFETCH || 50);
 const MAX_RETRY = Number(process.env.MAX_RETRIES || 5);
 
