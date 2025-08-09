@@ -1,7 +1,8 @@
-// worker.js (ESM)
+// worker.js
 import 'dotenv/config';
 import amqplib from 'amqplib';
 import { processEvent } from './services/high/processEvent.js';
+import { getIO } from './services/realtime/socketClient.js';
 
 const AMQP_URL  = process.env.AMQP_URL || process.env.DEFAULT_AMQP_URL || 'amqp://guest:guest@localhost:5672/';
 const QUEUE     = process.env.QUEUE || 'events.incoming';
@@ -9,6 +10,7 @@ const PREFETCH  = Number(process.env.PREFETCH || 50);
 const MAX_RETRY = Number(process.env.MAX_RETRIES || 5);
 
 let conn, ch, closing = false;
+const io = getIO(); // cliente Socket.IO (best-effort)
 
 const now = () => new Date().toISOString();
 const redact = (u) => String(u).replace(/(\/\/[^:]+:)([^@]+)(@)/, '$1***$3');
@@ -17,7 +19,7 @@ const getAttempts = (msg) => Number((msg.properties.headers || {})['x-attempts']
 function requeue(msg) {
   const h = { ...(msg.properties.headers || {}) };
   h['x-attempts'] = getAttempts(msg) + 1;
-  ch.nack(msg, false, true); // requeue simples
+  ch.nack(msg, false, true);
   console.log(`🔁 retry #${h['x-attempts']}`);
 }
 
@@ -34,7 +36,7 @@ async function onMessage(msg) {
   });
 
   try {
-    const status = await processEvent(evt);
+    const status = await processEvent(evt, { io }); // <<< integra com socket
     if (status === 'duplicate') {
       console.log('♻️ já processado (PG upsert) — ACK');
       ch.ack(msg);
