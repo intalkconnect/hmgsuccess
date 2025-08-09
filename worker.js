@@ -1,6 +1,4 @@
-// worker.js
-'use strict';
-
+// worker.js (ESM)
 import 'dotenv/config';
 import amqplib from 'amqplib';
 import { processEvent } from './services/high/processEvent.js';
@@ -19,8 +17,36 @@ const getAttempts = (msg) => Number((msg.properties.headers || {})['x-attempts']
 function requeue(msg) {
   const h = { ...(msg.properties.headers || {}) };
   h['x-attempts'] = getAttempts(msg) + 1;
-  ch.nack(msg, false, true); // requeue simples (depois dá pra evoluir pra backoff/TTL)
+  ch.nack(msg, false, true); // requeue simples
   console.log(`🔁 retry #${h['x-attempts']}`);
+}
+
+async function onMessage(msg) {
+  if (!msg) return;
+
+  let evt;
+  try { evt = JSON.parse(msg.content.toString()); }
+  catch (e) { console.error('❌ JSON inválido, descarta:', e?.message); ch.nack(msg, false, false); return; }
+
+  const attempts = getAttempts(msg);
+  console.log(`📦 evento (${now()}) attempts=${attempts} ->`, {
+    channel: evt?.channel, tenant: evt?.tenant_id, agg: evt?.aggregate_id, ext: evt?.external_id
+  });
+
+  try {
+    const status = await processEvent(evt);
+    if (status === 'duplicate') {
+      console.log('♻️ já processado (PG upsert) — ACK');
+      ch.ack(msg);
+      return;
+    }
+    ch.ack(msg);
+    console.log('✅ processado');
+  } catch (e) {
+    console.error('💥 erro no processamento:', e?.message || e);
+    if (attempts + 1 >= MAX_RETRY) { console.warn(`⛔️ estourou ${MAX_RETRY} — descarta`); ch.nack(msg, false, false); }
+    else requeue(msg);
+  }
 }
 
 async function start() {
@@ -39,35 +65,6 @@ async function start() {
 
   await ch.consume(QUEUE, onMessage, { noAck: false });
   console.log(`👂 Consumindo ${QUEUE}`);
-}
-
-async function onMessage(msg) {
-  if (!msg) return;
-
-  let evt;
-  try { evt = JSON.parse(msg.content.toString()); }
-  catch (e) { console.error('❌ JSON inválido, descarta:', e?.message); ch.nack(msg, false, false); return; }
-
-  const attempts = getAttempts(msg);
-  console.log(`📦 evento (${now()}) attempts=${attempts} ->`, {
-    channel: evt?.channel, tenant: evt?.tenant_id, agg: evt?.aggregate_id, ext: evt?.external_id
-  });
-
-  try {
-    // processEvent => faz o UPSERT em messages (idempotência) e segue o fluxo
-    const status = await processEvent(evt);
-    if (status === 'duplicate') {
-      console.log('♻️ já processado (PG upsert) — ACK');
-      ch.ack(msg);
-      return;
-    }
-    ch.ack(msg);
-    console.log('✅ processado');
-  } catch (e) {
-    console.error('💥 erro no processamento:', e?.message || e);
-    if (attempts + 1 >= MAX_RETRY) { console.warn(`⛔️ estourou ${MAX_RETRY} — descarta`); ch.nack(msg, false, false); }
-    else requeue(msg);
-  }
 }
 
 async function shutdown(reason) {
