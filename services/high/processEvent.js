@@ -1,9 +1,10 @@
 // services/high/processEvent.js
 import crypto from 'crypto';
-import { dbPool } from '../db.js';
+import { dbPool } from '../db.js'; // já inicializado pelo worker via initDB()
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
-import { markMessageAsRead } from '../wa/markMessageAsRead.js'; // se não existir no repo, comente esta import e as chamadas
+// Se não existir, comente a import e as chamadas:
+import { markMessageAsRead } from '../wa/markMessageAsRead.js';
 
 // Garante existir message_id para a UNIQUE (channel, message_id, user_id)
 function ensureMessageId(channel, rawIdParts) {
@@ -82,12 +83,12 @@ async function processWhatsApp(evt, { io } = {}) {
 
   try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
 
-  // Socket: iguais aos antigos (new_message + bot_processing)
+  // Socket (mesma semântica do seu projeto): new_message + bot_processing
   if (io) {
-    io.emit('new_message', inserted); // entrada
+    io.emit('new_message', inserted);
     const statusPayload = { user_id: formattedUserId, status: 'processing' };
     io.emit('bot_processing', statusPayload);
-    // opcional por sala:
+    // se você usava rooms por user:
     io.emit(`chat-${formattedUserId}`, inserted);
     io.emit(`chat-${formattedUserId}`, { type: 'bot_processing', ...statusPayload });
   }
@@ -106,7 +107,7 @@ async function processWhatsApp(evt, { io } = {}) {
       lastMessageId: msg.id
     },
     rawUserId: from,
-    io // se seu runFlow já emite, ele pode usar
+    io
   });
 
   if (io && outgoingMessage?.user_id) {
@@ -184,6 +185,5 @@ export async function processEvent(evt, { io } = {}) {
   if (!ch) return 'duplicate';
   if (ch === 'whatsapp') return processWhatsApp(evt, { io });
   if (ch === 'telegram') return processTelegram(evt, { io });
-  // IG/FB podem ser adicionados aqui no mesmo padrão
   return 'ok';
 }
