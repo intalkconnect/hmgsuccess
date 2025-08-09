@@ -8,10 +8,10 @@ let connected = false;
 export function getIO() {
   if (ioRef) return ioRef;
 
-  const url = process.env.SOCKET_URL;               // ex: https://channels.seu-dominio.com
+  const url = process.env.SOCKET_URL;
   const path = process.env.SOCKET_PATH || '/socket.io';
   const namespace = process.env.SOCKET_NAMESPACE || '/';
-  const authToken = process.env.SOCKET_TOKEN;       // opcional
+  const authToken = process.env.SOCKET_TOKEN;
 
   if (!url) {
     console.warn('[socket] SOCKET_URL não definido — desabilitado.');
@@ -32,22 +32,14 @@ export function getIO() {
   base.on('connect', () => {
     connected = true;
     console.log('[socket] conectado', base.id);
-    // drena fila
     for (const { ev, payload } of queue) {
       try { base.emit(ev, payload); } catch {}
     }
     queue = [];
   });
 
-  base.on('disconnect', (r) => {
-    connected = false;
-    console.warn('[socket] disconnect:', r);
-  });
-
-  base.on('connect_error', (e) => {
-    connected = false;
-    console.warn('[socket] connect_error:', e?.message || e);
-  });
+  base.on('disconnect', (r) => { connected = false; console.warn('[socket] disconnect:', r); });
+  base.on('connect_error', (e) => { connected = false; console.warn('[socket] connect_error:', e?.message || e); });
 
   ioRef = {
     emit(ev, payload) {
