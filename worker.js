@@ -5,7 +5,7 @@ import { initDB } from './services/db.js';
 import { processEvent } from './services/high/processEvent.js';
 import { getIO } from './services/realtime/socketClient.js';
 
-const AMQP_URL  = process.env.AMQP_URL || process.env.DEFAULT_AMQP_URL || 'amqp://guest:guest@localhost:5672/';
+const AMQP_URL  = process.env.AMQP_URL || 'amqp://guest:guest@localhost:5672/';
 const QUEUE     = process.env.QUEUE || 'events.incoming';
 const PREFETCH  = Number(process.env.PREFETCH || 50);
 const MAX_RETRY = Number(process.env.MAX_RETRIES || 5);
@@ -26,7 +26,6 @@ function requeue(msg) {
 
 async function onMessage(msg) {
   if (!msg) return;
-
   let evt;
   try { evt = JSON.parse(msg.content.toString()); }
   catch (e) { console.error('❌ JSON inválido, descarta:', e?.message); ch.nack(msg, false, false); return; }
@@ -38,28 +37,21 @@ async function onMessage(msg) {
 
   try {
     const status = await processEvent(evt, { io });
-    if (status === 'duplicate') {
-      console.log('♻️ já processado (PG upsert) — ACK');
-      ch.ack(msg);
-      return;
-    }
+    if (status === 'duplicate') { console.log('♻️ duplicate — ACK'); ch.ack(msg); return; }
     ch.ack(msg);
     console.log('✅ processado');
   } catch (e) {
     console.error('💥 erro no processamento:', e?.message || e);
-    if (attempts + 1 >= MAX_RETRY) { console.warn(`⛔️ estourou ${MAX_RETRY} — descarta`); ch.nack(msg, false, false); }
+    if (attempts + 1 >= MAX_RETRY) { console.warn(`⛔️ estourou ${MAX_RETRY} — NACK drop`); ch.nack(msg, false, false); }
     else requeue(msg);
   }
 }
 
 async function start() {
   console.log(`🚀 Worker @ ${now()} | AMQP=${redact(AMQP_URL)} | QUEUE=${QUEUE} | PREFETCH=${PREFETCH}`);
-
-  // 1) Inicializa Postgres (usa seu services/db.js)
   await initDB();
-  console.log('🗄️ Postgres conectado via initDB()');
+  console.log('🗄️ Postgres conectado');
 
-  // 2) Conecta no Rabbit
   conn = await amqplib.connect(AMQP_URL, { heartbeat: 15 });
   conn.on('error', e => console.error('[amqp conn error]', e));
   conn.on('close', () => { console.warn('[amqp conn closed]'); if (!closing) process.exit(1); });
@@ -67,11 +59,10 @@ async function start() {
   ch = await conn.createChannel();
   ch.on('error', e => console.error('[amqp ch error]', e));
   ch.on('close',  () => console.warn('[amqp ch closed]'));
-
   await ch.assertQueue(QUEUE, { durable: true });
   await ch.prefetch(PREFETCH);
-
   await ch.consume(QUEUE, onMessage, { noAck: false });
+
   console.log(`👂 Consumindo ${QUEUE}`);
 }
 
