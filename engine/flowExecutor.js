@@ -85,7 +85,7 @@ if (block.content?.queueName) {
 }
 
 await saveSession(userId, currentBlockId, flow.id, sessionVars);
-await distribuirTicket(userId, sessionVars.fila);
+await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
 return;
 
 }
