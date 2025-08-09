@@ -2,6 +2,8 @@
 import amqplib from 'amqplib';
 import { dbPool } from '../services/db.js';
 import { v4 as uuidv4 } from 'uuid';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const AMQP_URL = process.env.AMQP_URL || 'amqp://guest:guest@rabbitmq:5672/';
 const OUTGOING_QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outcoming';
@@ -15,89 +17,213 @@ async function ensureAMQP() {
   await amqpCh.assertQueue(OUTGOING_QUEUE, { durable: true });
   return amqpCh;
 }
-const d = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+
+const decode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+
+// igual ao antigo
+function validateContent(type, content, channel) {
+  if (!type) throw new Error('Message type is required');
+  if (type === 'text') {
+    if (!content || typeof content.body !== 'string' || !content.body.trim()) {
+      throw new Error('Message text cannot be empty');
+    }
+    return;
+  }
+  if (!content || !content.url || typeof content.url !== 'string') {
+    throw new Error(`Media URL is required for type "${type}" on channel "${channel}"`);
+  }
+}
+
+function formatUserId(to, channel = 'whatsapp') {
+  return channel === 'telegram' ? `${to}@t.msgcli.net` : `${to}@w.msgcli.net`;
+}
+
+// checagem 24h (como o antigo)
+async function within24h(userId) {
+  const { rows } = await dbPool.query(
+    `SELECT timestamp
+       FROM messages
+      WHERE user_id = $1 AND direction = 'incoming'
+      ORDER BY timestamp DESC
+      LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) return true;
+  const diffH = (Date.now() - new Date(rows[0].timestamp).getTime()) / 36e5;
+  return diffH <= 24;
+}
 
 export default async function messagesRoutes(fastify) {
   fastify.log.info('[messages] registrando rotas');
 
-  // --- FIXAS (precisam existir!) ---
-  fastify.get('/read-status', async () => {
-    const { rows } = await dbPool.query(`
-      SELECT user_id, MAX(updated_at) AS last_read_at
-      FROM messages
-      WHERE direction='incoming' AND status='read'
-      GROUP BY user_id
-    `);
-    const out = {}; for (const r of rows) out[r.user_id] = r.last_read_at; return out;
-  });
+  // ===================== ENVIO =====================
 
-  fastify.get('/unread-counts', async () => {
-    const { rows } = await dbPool.query(`
-      SELECT user_id, COUNT(*)::int AS unread
-      FROM messages
-      WHERE direction='incoming' AND (status IS NULL OR status<>'read')
-      GROUP BY user_id
-    `);
-    const out = {}; for (const r of rows) out[r.user_id] = r.unread; return out;
-  });
+  // POST /api/v1/messages/send   (mantida a rota do antigo)
+  // Agora: grava 'pending' e publica no Rabbit (hmg.outcoming)
+  fastify.post('/send', async (req, reply) => {
+    const { to, type, content, context, channel = 'whatsapp' } = req.body || {};
+    if (!to || !type) return reply.code(400).send({ error: 'Recipient and type are required' });
+    validateContent(type, content, channel);
 
-  fastify.put('/read-status/:userId', async (req) => {
-    const userId = d(req.params.userId);
-    const { rowCount } = await dbPool.query(`
-      UPDATE messages
-      SET status='read', updated_at=NOW()
-      WHERE user_id=$1 AND direction='incoming'
-        AND (status IS NULL OR status<>'read')
-    `, [userId]);
-    return { updated: rowCount };
-  });
+    const userId = formatUserId(to, channel);
 
-  fastify.get('/check-24h/:userId', async (req) => {
-    const userId = d(req.params.userId);
-    const { rows } = await dbPool.query(`
-      SELECT timestamp
-      FROM messages
-      WHERE user_id=$1
-      ORDER BY timestamp DESC
-      LIMIT 1
-    `, [userId]);
-    if (!rows.length) return { can_send_freeform: true };
-    const diffHours = (Date.now() - new Date(rows[0].timestamp).getTime()) / 36e5;
-    return { can_send_freeform: diffHours <= 24 };
-  });
-
-  fastify.post('/', async (req, reply) => {
-    const { channel, to, type, content, context } = req.body || {};
-    if (!channel || !to || !type) return reply.code(400).send({ error: 'payload inválido' });
+    // 24h só p/ WhatsApp (mantendo comportamento do antigo)
+    if (channel === 'whatsapp') {
+      const ok = await within24h(userId);
+      if (!ok) {
+        return reply.code(400).send({ error: 'Outside 24h window. Use an approved template.' });
+      }
+    }
 
     const tempId = uuidv4();
-    await dbPool.query(`
-      INSERT INTO messages (message_id, user_id, type, content, direction, status, channel,
-                            timestamp, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,'outgoing','pending',$5,NOW(),NOW(),NOW())
-    `, [tempId, String(to), type,
-        typeof content === 'string' ? content : JSON.stringify(content),
-        channel]);
+    const dbContent = type === 'text' ? content.body : JSON.stringify(content);
 
+    // grava PENDING
+    const { rows } = await dbPool.query(
+      `INSERT INTO messages (
+         user_id, message_id, direction, type, content, timestamp,
+         flow_id, reply_to, status, metadata, created_at, updated_at, channel
+       ) VALUES ($1,$2,'outgoing',$3,$4,NOW(),
+                 NULL, $5, 'pending', NULL, NOW(), NOW(), $6)
+       RETURNING *`,
+      [userId, tempId, type, dbContent, context?.message_id || null, channel]
+    );
+    const pending = rows[0];
+
+    // publica no Rabbit
     const ch = await ensureAMQP();
     ch.sendToQueue(
       OUTGOING_QUEUE,
-      Buffer.from(JSON.stringify({ tempId, channel, to:String(to), type, content, context })),
+      Buffer.from(JSON.stringify({
+        tempId,
+        channel,
+        to,              // cru (sem sufixo) pro worker decidir como normalizar
+        userId,          // completo, pra correlacionar no DB/socket
+        type,
+        content,
+        context
+      })),
       { persistent: true, headers: { 'x-attempts': 0 } }
     );
 
-    return { success: true, enqueued: true, tempId, user_id: String(to) };
+    // emite pra UI (opcional, mas ajuda)
+    try {
+      fastify.io?.to(`chat-${userId}`).emit('new_message', pending);
+      fastify.io?.emit('new_message', pending);
+    } catch {}
+
+    return reply.send({ success: true, enqueued: true, message: pending, channel });
   });
 
-  // --- DINÂMICA POR ÚLTIMO ---
-  fastify.get('/:userId', async (req) => {
-    const userId = d(req.params.userId);
-    const { rows } = await dbPool.query(`
-      SELECT *
-      FROM messages
-      WHERE user_id=$1
-      ORDER BY timestamp ASC
-    `, [userId]);
-    return rows || [];
+  // POST /api/v1/messages/send/template  (mesma rota do antigo; agora vai via fila)
+  fastify.post('/send/template', async (req, reply) => {
+    const { to, templateName, languageCode, components } = req.body || {};
+    if (!to || !templateName || !languageCode) {
+      return reply.code(400).send({ error: 'to, templateName, languageCode são obrigatórios' });
+    }
+    const channel = 'whatsapp';
+    const userId = formatUserId(to, channel);
+    const tempId = uuidv4();
+
+    // grava PENDING no DB
+    const meta = JSON.stringify({ languageCode, components });
+    const { rows } = await dbPool.query(
+      `INSERT INTO messages (
+         user_id, message_id, direction, type, content,
+         timestamp, status, metadata, created_at, updated_at, channel
+       ) VALUES ($1,$2,'outgoing','template',$3,
+                 NOW(),'pending',$4,NOW(),NOW(),$5)
+       RETURNING *`,
+      [userId, tempId, templateName, meta, channel]
+    );
+    const pending = rows[0];
+
+    // publica no Rabbit (workerOut monta payload do template)
+    const ch = await ensureAMQP();
+    ch.sendToQueue(
+      OUTGOING_QUEUE,
+      Buffer.from(JSON.stringify({
+        tempId,
+        channel: 'whatsapp',
+        to,
+        type: 'template',
+        content: { templateName, languageCode, components }
+      })),
+      { persistent: true, headers: { 'x-attempts': 0 } }
+    );
+
+    try {
+      fastify.io?.to(`chat-${userId}`).emit('new_message', pending);
+      fastify.io?.emit('new_message', pending);
+    } catch {}
+
+    return reply.send({ success: true, enqueued: true, message: pending, channel });
+  });
+
+  // ===================== STATUS / CONTAGEM =====================
+
+  // GET /api/v1/messages/check-24h/:user_id   (compat com antigo)
+  fastify.get('/check-24h/:user_id', async (req) => {
+    const userId = decode(req.params.user_id);
+    const ok = await within24h(userId);
+    return { within24h: ok, can_send_freeform: ok, lastIncoming: ok ? undefined : undefined };
+  });
+
+  // PUT /api/v1/messages/read-status/:user_id  (mantém user_last_read)
+  fastify.put('/read-status/:user_id', async (req, reply) => {
+    const userId = decode(req.params.user_id);
+    const { last_read } = req.body || {};
+    if (!last_read) return reply.code(400).send({ error: 'last_read é obrigatório' });
+
+    const { rows } = await dbPool.query(
+      `INSERT INTO user_last_read (user_id, last_read)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET last_read = EXCLUDED.last_read
+       RETURNING user_id, last_read;`,
+      [userId, last_read]
+    );
+    return rows[0];
+  });
+
+  // GET /api/v1/messages/read-status  (o front chama isso)
+  fastify.get('/read-status', async () => {
+    const { rows } = await dbPool.query(
+      `SELECT user_id, last_read FROM user_last_read`
+    );
+    // pode devolver array mesmo (o front só precisa de mapa/array)
+    return rows;
+  });
+
+  // GET /api/v1/messages/unread-counts  (compat com antigo)
+  fastify.get('/unread-counts', async () => {
+    const { rows } = await dbPool.query(
+      `
+      SELECT 
+        m.user_id,
+        COUNT(*)::int AS unread_count
+      FROM messages m
+      LEFT JOIN user_last_read r ON m.user_id = r.user_id
+      WHERE 
+        m.direction = 'incoming'
+        AND m.created_at > COALESCE(r.last_read, '1970-01-01')
+      GROUP BY m.user_id
+      `
+    );
+    return rows;
+  });
+
+  // ===================== LISTAGEM =====================
+
+  // GET /api/v1/messages/:user_id  (DEIXE POR ÚLTIMO)
+  fastify.get('/:user_id', async (req, reply) => {
+    const userId = decode(req.params.user_id);
+    const { rows } = await dbPool.query(
+      `SELECT * FROM messages
+        WHERE user_id = $1
+        ORDER BY timestamp ASC;`,
+      [userId]
+    );
+    return rows;
   });
 }
