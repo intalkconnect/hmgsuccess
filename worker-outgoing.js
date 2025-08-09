@@ -3,16 +3,16 @@ import amqplib from 'amqplib';
 import { dispatchOutgoing } from './services/outgoing/dispatcher.js';
 
 const AMQP_URL       = process.env.AMQP_URL || 'amqp://guest:guest@rabbitmq:5672/';
-const OUTGOING_QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outcoming';
+const QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outgoing';
 const PREFETCH       = Number(process.env.PREFETCH || 50);
 
 async function start() {
   const conn = await amqplib.connect(AMQP_URL, { heartbeat: 15 });
   const ch   = await conn.createChannel();
-  await ch.assertQueue(OUTGOING_QUEUE, { durable: true });
+  await ch.assertQueue(QUEUE, { durable: true });
   await ch.prefetch(PREFETCH);
 
-  ch.consume(OUTGOING_QUEUE, async (msg) => {
+  ch.consume(QUEUE, async (msg) => {
     if (!msg) return;
     let data;
     try { data = JSON.parse(msg.content.toString()); }
@@ -39,7 +39,7 @@ async function start() {
     }
   }, { noAck: false });
 
-  console.log(`[workerOut] consumindo ${OUTGOING_QUEUE}`);
+  console.log(`[workerOut] consumindo ${QUEUE}`);
 }
 
 start().catch((e) => { console.error('[workerOut] start fail:', e); process.exit(1); });
