@@ -2,16 +2,14 @@
 import { io as ioc } from 'socket.io-client';
 
 let ioRef = null;
-let queue = [];
-let connected = false;
 
 export function getIO() {
   if (ioRef) return ioRef;
 
-  const url = process.env.SOCKET_URL;
-  const path = process.env.SOCKET_PATH || '/socket.io';
-  const namespace = process.env.SOCKET_NAMESPACE || '/';
-  const authToken = process.env.SOCKET_TOKEN;
+  const url        = process.env.SOCKET_URL;        // ex.: http://realtime:8080
+  const path       = process.env.SOCKET_PATH || '/socket.io';
+  const namespace  = process.env.SOCKET_NAMESPACE || '/';
+  const authToken  = process.env.SOCKET_TOKEN;      // mesmo do servidor
 
   if (!url) {
     console.warn('[socket] SOCKET_URL não definido — desabilitado.');
@@ -20,7 +18,7 @@ export function getIO() {
 
   const base = ioc(`${url}${namespace}`, {
     path,
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 500,
     reconnectionDelayMax: 5000,
@@ -30,28 +28,15 @@ export function getIO() {
   });
 
   base.on('connect', () => {
-    connected = true;
-    console.log('[socket] conectado', base.id);
-    for (const { ev, payload } of queue) {
-      try { base.emit(ev, payload); } catch {}
-    }
-    queue = [];
+    console.log('[socket] conectado (worker)', base.id);
   });
-
-  base.on('disconnect', (r) => { connected = false; console.warn('[socket] disconnect:', r); });
-  base.on('connect_error', (e) => { connected = false; console.warn('[socket] connect_error:', e?.message || e); });
+  base.on('disconnect', (r) => console.warn('[socket] disconnect:', r));
+  base.on('connect_error', (e) => console.warn('[socket] connect_error:', e?.message || e));
 
   ioRef = {
-    emit(ev, payload) {
-      if (connected) {
-        try { base.emit(ev, payload); } catch (e) { console.warn('[socket emit]', e?.message || e); }
-      } else {
-        if (queue.length < 500) queue.push({ ev, payload });
-      }
-    },
+    emit: (...args) => base.emit(...args),
     on: (...args) => base.on(...args),
-    connected: () => connected
+    connected: () => base.connected,
   };
-
   return ioRef;
 }
