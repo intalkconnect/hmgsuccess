@@ -1,25 +1,22 @@
-// services/high/processEvent.js
-'use strict';
+// services/high/processEvent.js (ESM)
+import pg from 'pg';
+import crypto from 'crypto';
+import { runFlow } from '../../engine/flowExecutor.js';
+import { processMediaIfNeeded } from './processFileHeavy.js';
+// marque como opcional se ainda não existir no repo
+import { markMessageAsRead } from '../wa/markMessageAsRead.js'; // ajuste/remoção se necessário
 
-// Ajuste os caminhos conforme seu projeto:
-const { dbPool } = require('../db'); // deve exportar um pg.Pool
-const { runFlow } = require('../../engine/flowExecutor');
-const { markMessageAsRead } = require('../wa/markMessageAsRead'); // opcional p/ WhatsApp
-const { processMediaIfNeeded } = require('./processFileHeavy');
-const crypto = require('crypto');
+const { Pool } = pg;
+const dbPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Helpers -------------------------------------------------
-
+// ------------ helpers ------------
 function ensureMessageId(channel, rawIdParts) {
-  // Garante que teremos "message_id" não-nulo para satisfazer a UNIQUE (channel, message_id, user_id)
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
   if (joined) return joined;
-  // fallback: hash do payload quando nada veio
   return `gen:${channel}:${crypto.randomUUID()}`;
 }
 
 async function insertClienteIfAbsent({ phone, name, channel, userId }) {
-  // Sem UNIQUE em clientes, usamos INSERT … SELECT … WHERE NOT EXISTS
   await dbPool.query(`
     INSERT INTO clientes (phone, name, channel, user_id, create_at)
     SELECT $1, $2, $3, $4, NOW()
@@ -30,10 +27,9 @@ async function insertClienteIfAbsent({ phone, name, channel, userId }) {
 }
 
 async function upsertIncomingMessage({ channel, userId, messageId, msgType, content }) {
-  // Idempotência: sua constraint messages_unique_id_per_channel (channel, message_id, user_id)
   const res = await dbPool.query(`
     INSERT INTO messages (
-      user_id, message_id, direction, type, content,
+      user_id, message_id, direction, "type", "content",
       "timestamp", flow_id, reply_to, status, metadata,
       created_at, updated_at, channel
     )
@@ -49,18 +45,15 @@ async function upsertIncomingMessage({ channel, userId, messageId, msgType, cont
     typeof content === 'string' ? content : JSON.stringify(content),
     channel
   ]);
-
-  return res.rowCount > 0; // true se inseriu (não-duplicado)
+  return res.rowCount > 0;
 }
 
 async function getActiveFlow() {
-  // sua tabela flows tem unique_active_flow (active = true)
   const { rows } = await dbPool.query(`SELECT * FROM flows WHERE active = true LIMIT 1`);
   return rows[0]?.data || null;
 }
 
-// WhatsApp ------------------------------------------------
-
+// ------------ canais ------------
 async function processWhatsApp(evt) {
   const value = evt?.payload?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return 'duplicate';
@@ -72,10 +65,8 @@ async function processWhatsApp(evt) {
   const formattedUserId = `${from}@w.msgcli.net`;
   const msgType = msg.type;
 
-  // Pesado → baixa/upload mídia se necessário
   const { content, userMessage } = await processMediaIfNeeded('whatsapp', { value, msg });
 
-  // Cliente
   await insertClienteIfAbsent({
     phone: from,
     name: profileName,
@@ -84,8 +75,6 @@ async function processWhatsApp(evt) {
   });
 
   const messageId = ensureMessageId('whatsapp', [msg.id]);
-
-  // Idempotência + gravação
   const inserted = await upsertIncomingMessage({
     channel: 'whatsapp',
     userId: formattedUserId,
@@ -95,11 +84,9 @@ async function processWhatsApp(evt) {
   });
   if (!inserted) return 'duplicate';
 
-  // Marca lida (best-effort)
-  try { if (msg.id) markMessageAsRead(msg.id); } catch {}
+  try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
 
   const activeFlow = await getActiveFlow();
-
   await runFlow({
     message: (userMessage || '').toLowerCase(),
     flow: activeFlow,
@@ -117,13 +104,10 @@ async function processWhatsApp(evt) {
   return 'ok';
 }
 
-// Telegram -----------------------------------------------
-
 async function processTelegram(evt) {
   const update = evt?.payload;
   if (!update) return 'duplicate';
 
-  const isCallback = !!update.callback_query;
   const message = update.message || update.callback_query?.message;
   const from = update.message?.from || update.callback_query?.from;
   const chatId = message?.chat?.id;
@@ -138,9 +122,7 @@ async function processTelegram(evt) {
     userId
   });
 
-  // Use message.message_id ou update.update_id; combine com chatId para unicidade estável
   const messageId = ensureMessageId('telegram', [chatId, (message?.message_id ?? update.update_id)]);
-
   const inserted = await upsertIncomingMessage({
     channel: 'telegram',
     userId,
@@ -151,7 +133,6 @@ async function processTelegram(evt) {
   if (!inserted) return 'duplicate';
 
   const activeFlow = await getActiveFlow();
-
   await runFlow({
     message: (userMessage || '').toLowerCase(),
     flow: activeFlow,
@@ -168,15 +149,10 @@ async function processTelegram(evt) {
   return 'ok';
 }
 
-// Router -------------------------------------------------
-
-async function processEvent(evt) {
+export async function processEvent(evt) {
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
   if (ch === 'whatsapp') return processWhatsApp(evt);
   if (ch === 'telegram') return processTelegram(evt);
-  // IG/FB podem ser adicionados aqui no mesmo padrão
   return 'ok';
 }
-
-module.exports = { processEvent };
