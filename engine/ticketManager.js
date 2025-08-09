@@ -1,42 +1,69 @@
+// engine/ticketManager.js (ou onde está seu distribuirTicket)
 import { dbPool } from '../services/db.js';
 import { v4 as uuidv4 } from 'uuid';
 
-export async function distribuirTicket(userId, queueName) {
+// 🔧 Helper: monta o user_id persistido por canal
+function buildStorageUserId(rawUserId, channel) {
+  // já vem com sufixo? mantém
+  if (/@[a-z]\./i.test(String(rawUserId))) return String(rawUserId);
+
+  switch ((channel || '').toLowerCase()) {
+    case 'whatsapp':
+    case 'wa':
+      return `${rawUserId}@w.msgcli.net`;
+    case 'telegram':
+    case 'tg':
+      return `${rawUserId}@t.msgcli.net`;
+    case 'webchat':
+    case 'web':
+      return `${rawUserId}@web`;
+    default:
+      // fallback: mantém cru (ou defina um sufixo padrão do seu sistema)
+      return String(rawUserId);
+  }
+}
+
+/**
+ * Distribui ticket e insere mensagem de sistema "Ticket #123".
+ * ATENÇÃO: agora recebe rawUserId + channel para compor o user_id correto.
+ */
+export async function distribuirTicket(rawUserId, queueName, channel) {
   const client = await dbPool.connect();
+  const storageUserId = buildStorageUserId(rawUserId, channel);
+
   try {
     await client.query('BEGIN');
 
     async function inserirMensagemSistema(ticketNumber) {
-  const systemMessage = `Ticket #${ticketNumber}`;
-  const whatsappMessageId = uuidv4(); // gerar ID único
+      const systemMessage = `Ticket #${ticketNumber}`;
+      const systemMessageId = uuidv4(); // genérico (não "whatsappMessageId")
 
-  await client.query(`
-    INSERT INTO messages (
-      user_id,
-      type,
-      direction,
-      content,
-      timestamp,
-      message_id
-    ) VALUES (
-      $1, 'system', 'system', $2, NOW(), $3
-    )
-  `, [
-    userId,
-    systemMessage,
-    whatsappMessageId
-  ]);
-}
+      await client.query(
+        `
+        INSERT INTO messages (
+          user_id,
+          type,
+          direction,
+          content,
+          timestamp,
+          message_id
+        ) VALUES (
+          $1, 'system', 'system', $2, NOW(), $3
+        )
+        `,
+        [storageUserId, systemMessage, systemMessageId]
+      );
+    }
 
-    // 🔍 Verificar se já existe um ticket aberto
+    // 🔍 Verificar se já existe um ticket aberto (usa SEMPRE storageUserId)
     const ticketAbertoQuery = await client.query(
       'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
-      [userId, 'open']
+      [storageUserId, 'open']
     );
     const ticketAberto = ticketAbertoQuery.rows[0];
     if (ticketAberto) {
       await client.query('COMMIT');
-      return { ticketExists: true, ticketId: ticketAberto.id };
+      return { ticketExists: true, ticketId: ticketAberto.id, userId: storageUserId };
     }
 
     // 1. Buscar configuração
@@ -51,7 +78,7 @@ export async function distribuirTicket(userId, queueName) {
     if (!filaCliente) {
       const filaResult = await client.query(
         'SELECT fila FROM clientes WHERE user_id = $1 LIMIT 1',
-        [userId]
+        [storageUserId]
       );
       filaCliente = filaResult.rows[0]?.fila || 'Default';
     }
@@ -61,18 +88,18 @@ export async function distribuirTicket(userId, queueName) {
 
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
-        [userId, filaCliente, null]
+        [storageUserId, filaCliente, null]
       );
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
-
       await inserirMensagemSistema(ticketNumber);
-      
+
       await client.query('COMMIT');
       return {
         mode: 'manual',
         ticketNumber,
         assignedTo: null,
+        userId: storageUserId,
       };
     }
 
@@ -81,8 +108,8 @@ export async function distribuirTicket(userId, queueName) {
       'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
     );
-    const candidatos = atendentesQuery.rows.filter(a =>
-      Array.isArray(a.filas) && a.filas.includes(filaCliente)
+    const candidatos = atendentesQuery.rows.filter(
+      a => Array.isArray(a.filas) && a.filas.includes(filaCliente)
     );
 
     if (!candidatos.length) {
@@ -90,7 +117,7 @@ export async function distribuirTicket(userId, queueName) {
 
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
-        [userId, filaCliente, null]
+        [storageUserId, filaCliente, null]
       );
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
@@ -102,6 +129,7 @@ export async function distribuirTicket(userId, queueName) {
         ticketNumber,
         assignedTo: null,
         mode: 'auto-no-agent',
+        userId: storageUserId,
       };
     }
 
@@ -128,13 +156,13 @@ export async function distribuirTicket(userId, queueName) {
     if (!escolhido) {
       console.warn('⚠️ Não foi possível determinar atendente.');
       await client.query('COMMIT');
-      return { success: false, error: 'No agent available' };
+      return { success: false, error: 'No agent available', userId: storageUserId };
     }
 
     // 6. Criar ticket atribuído
     const createTicketQuery = await client.query(
       `SELECT create_ticket($1, $2, $3) as ticket_number`,
-      [userId, filaCliente, escolhido]
+      [storageUserId, filaCliente, escolhido]
     );
 
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
@@ -147,6 +175,7 @@ export async function distribuirTicket(userId, queueName) {
       ticketNumber,
       assignedTo: escolhido,
       mode: 'auto-created',
+      userId: storageUserId,
     };
 
   } catch (error) {
