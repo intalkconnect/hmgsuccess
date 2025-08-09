@@ -1,6 +1,6 @@
 // services/high/processFileHeavy.js
 import axios from 'axios';
-import { uploadToMinio } from '../uploadToMinio.js'; // ajuste o caminho se no seu repo estiver diferente
+import { uploadToMinio } from '../uploadToMinio.js';
 
 async function waDownloadMedia(mediaId) {
   const token = process.env.WHATSAPP_TOKEN;
@@ -26,10 +26,6 @@ async function tgGetFileUrl(fileId) {
   return `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${filePath}`;
 }
 
-/**
- * Retorna { content, userMessage, msgType }
- * - content vai em TEXT na tabela de messages (quando objeto, retornamos JSON.stringify)
- */
 export async function processMediaIfNeeded(channel, ctx) {
   if (channel === 'whatsapp') {
     const { msg } = ctx;
@@ -39,12 +35,10 @@ export async function processMediaIfNeeded(channel, ctx) {
       const text = msg.text?.body || '';
       return { content: text, userMessage: text, msgType: 'text' };
     }
-
     if (type === 'interactive') {
       const choice = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || '';
       return { content: choice, userMessage: choice, msgType: 'interactive' };
     }
-
     if (['image','video','audio','document','sticker'].includes(type)) {
       try {
         const mediaId = msg[type]?.id;
@@ -69,13 +63,11 @@ export async function processMediaIfNeeded(channel, ctx) {
         return { content: '[mídia erro]', userMessage: '[mídia erro]', msgType: type || 'media' };
       }
     }
-
     if (type === 'location') {
       const { latitude, longitude } = msg.location || {};
       const text = `📍 ${latitude}, ${longitude}`;
       return { content: text, userMessage: text, msgType: 'location' };
     }
-
     return { content: `[tipo não tratado: ${type}]`, userMessage: `[tipo não tratado: ${type}]`, msgType: type || 'unknown' };
   }
 
