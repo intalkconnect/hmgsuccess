@@ -1,16 +1,16 @@
 // services/high/processEvent.js
 import crypto from 'crypto';
-import { dbPool } from '../db.js'; // já inicializado pelo worker via initDB()
+import { dbPool } from '../db.js'; // já inicializado no worker via initDB()
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
-// Se não existir, comente a import e as chamadas:
-import { markMessageAsRead } from '../wa/markMessageAsRead.js';
+import { emitToRoom } from '../realtime/emitToRoom.js';
 
-// Garante existir message_id para a UNIQUE (channel, message_id, user_id)
+// (opcional) se tiver no seu projeto:
+// import { markMessageAsRead } from '../wa/markMessageAsRead.js';
+
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
-  if (joined) return joined;
-  return `gen:${channel}:${crypto.randomUUID()}`;
+  return joined || `gen:${channel}:${crypto.randomUUID()}`;
 }
 
 async function insertClienteIfAbsent({ phone, name, channel, userId }) {
@@ -50,54 +50,42 @@ async function getActiveFlow() {
   return rows[0]?.data || null;
 }
 
-// ------------------- WhatsApp -------------------
+// -------- WhatsApp --------
 async function processWhatsApp(evt, { io } = {}) {
   const value = evt?.payload?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return 'duplicate';
   const msg = value?.messages?.[0];
   if (!msg) return 'duplicate';
 
-  const from = value?.contacts?.[0]?.wa_id;
+  const from        = value?.contacts?.[0]?.wa_id;
   const profileName = value?.contacts?.[0]?.profile?.name || 'usuário';
-  const formattedUserId = `${from}@w.msgcli.net`;
-  const msgType = msg.type;
+  const userId      = `${from}@w.msgcli.net`;  // room no front
+  const msgType     = msg.type;
 
   const { content, userMessage } = await processMediaIfNeeded('whatsapp', { msg });
 
-  await insertClienteIfAbsent({
-    phone: from,
-    name: profileName,
-    channel: 'whatsapp',
-    userId: formattedUserId
-  });
+  await insertClienteIfAbsent({ phone: from, name: profileName, channel: 'whatsapp', userId });
 
   const messageId = ensureMessageId('whatsapp', [msg.id]);
-  const inserted = await upsertIncomingMessage({
+  const inserted  = await upsertIncomingMessage({
     channel: 'whatsapp',
-    userId: formattedUserId,
+    userId,
     messageId,
     msgType,
     content
   });
   if (!inserted) return 'duplicate';
 
-  try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
+  // try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
 
-  // Socket (mesma semântica do seu projeto): new_message + bot_processing
-  if (io) {
-    io.emit('new_message', inserted);
-    const statusPayload = { user_id: formattedUserId, status: 'processing' };
-    io.emit('bot_processing', statusPayload);
-    // se você usava rooms por user:
-    io.emit(`chat-${formattedUserId}`, inserted);
-    io.emit(`chat-${formattedUserId}`, { type: 'bot_processing', ...statusPayload });
-  }
+  // envia para a SALA correta (somente esse cliente vê)
+  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
+  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
 
-  const activeFlow = await getActiveFlow();
-
-  const outgoingMessage = await runFlow({
+  const flow = await getActiveFlow();
+  const outgoing = await runFlow({
     message: (userMessage || '').toLowerCase(),
-    flow: activeFlow,
+    flow,
     vars: {
       userPhone: from,
       userName: profileName,
@@ -110,23 +98,21 @@ async function processWhatsApp(evt, { io } = {}) {
     io
   });
 
-  if (io && outgoingMessage?.user_id) {
-    io.emit('new_message', outgoingMessage);
-    io.emit(`chat-${formattedUserId}`, outgoingMessage);
+  if (outgoing?.user_id) {
+    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
   }
-
   return 'ok';
 }
 
-// ------------------- Telegram -------------------
+// -------- Telegram --------
 async function processTelegram(evt, { io } = {}) {
   const update = evt?.payload;
   if (!update) return 'duplicate';
 
   const message = update.message || update.callback_query?.message;
-  const from = update.message?.from || update.callback_query?.from;
-  const chatId = message?.chat?.id;
-  const userId = `${chatId}@t.msgcli.net`;
+  const from    = update.message?.from || update.callback_query?.from;
+  const chatId  = message?.chat?.id;
+  const userId  = `${chatId}@t.msgcli.net`;
 
   const { content, userMessage, msgType } = await processMediaIfNeeded('telegram', { update, message });
 
@@ -138,7 +124,7 @@ async function processTelegram(evt, { io } = {}) {
   });
 
   const messageId = ensureMessageId('telegram', [chatId, (message?.message_id ?? update.update_id)]);
-  const inserted = await upsertIncomingMessage({
+  const inserted  = await upsertIncomingMessage({
     channel: 'telegram',
     userId,
     messageId,
@@ -147,19 +133,13 @@ async function processTelegram(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  if (io) {
-    io.emit('new_message', inserted);
-    const statusPayload = { user_id: userId, status: 'processing' };
-    io.emit('bot_processing', statusPayload);
-    io.emit(`chat-${userId}`, inserted);
-    io.emit(`chat-${userId}`, { type: 'bot_processing', ...statusPayload });
-  }
+  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
+  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
 
-  const activeFlow = await getActiveFlow();
-
-  const outgoingMessage = await runFlow({
+  const flow = await getActiveFlow();
+  const outgoing = await runFlow({
     message: (userMessage || '').toLowerCase(),
-    flow: activeFlow,
+    flow,
     vars: {
       userPhone: String(chatId),
       userName: `${from?.first_name || ''} ${from?.last_name || ''}`.trim(),
@@ -171,15 +151,13 @@ async function processTelegram(evt, { io } = {}) {
     io
   });
 
-  if (io && outgoingMessage?.user_id) {
-    io.emit('new_message', outgoingMessage);
-    io.emit(`chat-${userId}`, outgoingMessage);
+  if (outgoing?.user_id) {
+    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
   }
-
   return 'ok';
 }
 
-// ------------------- Router -------------------
+// -------- Router --------
 export async function processEvent(evt, { io } = {}) {
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
