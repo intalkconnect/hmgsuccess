@@ -1,11 +1,10 @@
-// sse.js  (rodar com: node sse.js)
-// Servidor SSE + LISTEN/NOTIFY com PG local
-
+// realtime/server.js  (SSE + LISTEN/NOTIFY, sem WebSocket)
 import Fastify from 'fastify';
 import pg from 'pg';
 
+// PG (usa DATABASE_URL se existir; senão, variáveis PG*)
 const {
-  SSE_PORT = 8090,
+  PORT = Number(process.env.SOCKET_PORT || 8080);
   PGHOST = process.env.PGHOST || 'localhost',
   PGPORT = process.env.PGPORT || 5432,
   PGUSER = process.env.PGUSER || 'postgres',
@@ -14,21 +13,20 @@ const {
 } = process.env;
 
 const app = Fastify({ logger: true });
+
+// ---------- LISTEN/NOTIFY ----------
 const { Client } = pg;
+const pgListen = new Client(
+  DATABASE_URL
+    ? { connectionString: DATABASE_URL }
+    : { host: PGHOST, port: Number(PGPORT), user: PGUSER, password: PGPASSWORD, database: PGDATABASE }
+);
 
-// 1 conexão dedicada para LISTEN (não use pool)
-const pgListen = new Client({
-  host: PGHOST,
-  port: Number(PGPORT),
-  user: PGUSER,
-  password: PGPASSWORD,
-  database: PGDATABASE,
-});
+// subscribers: user_id -> Set(res)
+const subscribers = new Map();
 
-const subs = new Map(); // user_id -> Set(res)
-
-function push(userId, event, payload) {
-  const set = subs.get(String(userId));
+function ssePush(userId, event, payload) {
+  const set = subscribers.get(String(userId));
   if (!set || !set.size) return;
   const data = JSON.stringify(payload);
   for (const res of set) {
@@ -37,6 +35,7 @@ function push(userId, event, payload) {
   }
 }
 
+// ---------- SSE endpoint ----------
 app.get('/events', (req, reply) => {
   const userId = String(req.query.user_id || '');
   if (!userId) return reply.code(400).send({ error: 'user_id obrigatório' });
@@ -46,33 +45,35 @@ app.get('/events', (req, reply) => {
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
   });
   reply.hijack();
-
-  if (!subs.has(userId)) subs.set(userId, new Set());
   const res = reply.raw;
-  subs.get(userId).add(res);
+
+  if (!subscribers.has(userId)) subscribers.set(userId, new Set());
+  subscribers.get(userId).add(res);
 
   const ping = setInterval(() => res.write(`: ping\n\n`), 25000);
 
   req.raw.on('close', () => {
     clearInterval(ping);
-    const set = subs.get(userId);
+    const set = subscribers.get(userId);
     if (!set) return;
     set.delete(res);
-    if (!set.size) subs.delete(userId);
+    if (!set.size) subscribers.delete(userId);
   });
 
-  // opcional: hello
   res.write(`event: ready\n`);
   res.write(`data: {"ok":true}\n\n`);
 });
 
-async function start() {
+// health
+app.get('/healthz', async () => ({ ok: true, subs: [...subscribers.keys()].length }));
+
+async function startPgListen() {
   await pgListen.connect();
   app.log.info('🗄️ PG LISTEN conectado');
 
-  // canais que vamos ouvir
   await pgListen.query('LISTEN new_message');
   await pgListen.query('LISTEN update_message');
   await pgListen.query('LISTEN bot_processing');
@@ -82,17 +83,22 @@ async function start() {
       const payload = JSON.parse(msg.payload || '{}');
       const uid = payload.user_id || payload.userId || payload.uid;
       if (!uid) return;
-      push(uid, msg.channel, payload);
-      app.log.debug({ channel: msg.channel, uid }, 'SSE broadcast');
+      ssePush(uid, msg.channel, payload);
+      app.log.debug({ channel: msg.channel, user_id: uid }, 'SSE broadcast');
     } catch (e) {
-      app.log.warn('NOTIFY payload inválido:', e.message);
+      app.log.warn('NOTIFY payload inválido:', e?.message || e);
     }
   });
 
-  pgListen.on('error', (e) => app.log.error('pg error:', e));
-
-  await app.listen({ host: '0.0.0.0', port: Number(SSE_PORT) });
-  app.log.info(`🔊 SSE @ :${SSE_PORT}/events?user_id=...`);
+  pgListen.on('error', (e) => app.log.error('pg listen error:', e));
 }
 
-start().catch((e) => { console.error(e); process.exit(1); });
+app.listen({ host: '0.0.0.0', port: PORT })
+  .then(async () => {
+    app.log.info(`🔊 SSE @ :${PORT}/events?user_id=...`);
+    await startPgListen();
+  })
+  .catch((e) => { app.log.error(e); process.exit(1); });
+
+// (export vazio só pra não quebrar imports antigos — ninguém usa mais)
+export const io = null;
