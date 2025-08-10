@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { initDB, dbPool } from '../../db.js';         // se preferir, o initDB pode ser feito na app principal e removido daqui
-import { getIO } from '../../realtime/socketClient.js';
 
 const API_VERSION     = process.env.API_VERSION || 'v22.0';
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -78,8 +77,6 @@ export async function sendViaWhatsApp({ tempId, to, type, content, context, user
       [platformId, tempId]
     );
 
-    // emita em tempo real se quiser
-    // getIO()?.to(`chat-${userId}`).emit('update_message', {...});
 
     return { ok: true, platformId };
   } catch (e) {
