@@ -1,10 +1,16 @@
 // services/realtime/emitToRoom.js
-export function emitToRoom(io, { room, event, data }) {
-  if (!io || !process.env.SOCKET_URL) return; // socket desabilitado
-  if (!room || !event) return;
-  try {
-    io.emit('server_emit', { room: String(room), event: String(event), data });
-  } catch (e) {
-    console.warn('[emitToRoom] falha ao emitir:', e?.message || e);
-  }
+import { dbPool } from '../db.js';
+
+export async function emitToRoom(_ioNotUsed, { room, event, data }) {
+  if (!room) return;
+  // payload tem limite de ~8KB no Postgres; mantenha conciso
+  const payload = JSON.stringify({ event: String(event || 'message'), data });
+  // canal precisa ser identificado; usamos aspas para evitar problemas com hífens
+  await dbPool.query(`SELECT pg_notify($1, $2)`, [String(room), payload]);
+}
+
+// atalho para broadcast opcional
+export async function broadcast(event, data) {
+  const payload = JSON.stringify({ event: String(event || 'message'), data });
+  await dbPool.query(`SELECT pg_notify('broadcast', $1)`, [payload]);
 }
