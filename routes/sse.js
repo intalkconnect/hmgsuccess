@@ -1,4 +1,13 @@
 import { pgBus } from '../services/realtime/pgBus.js';
+import crypto from 'crypto';
+
+// Helper: traduz room arbitrária -> nome seguro de canal no PG
+function toChannel(room) {
+  const r = String(room || '').trim();
+  if (r === 'broadcast') return 'broadcast';
+  // hash estável para evitar vazamento de dados e colisões
+  return 'r_' + crypto.createHash('sha1').update(r).digest('hex');
+}
 
 export default async function sseRoutes(fastify) {
   fastify.get('/sse', async (req, reply) => {
@@ -25,31 +34,32 @@ export default async function sseRoutes(fastify) {
 
     const hb = setInterval(() => reply.raw.write(': ping\n\n'), 15000);
 
-    // garante que o bus está conectado
     await pgBus.ready();
 
-    // registra listeners em memória + LISTEN refCount
     const offFns = [];
     for (const room of listenRooms) {
-      await pgBus.listen(room);
+      const channel = toChannel(room); // <- aqui sanitiza para o PG
+      await pgBus.listen(channel);
       const handler = (msg) => {
-        // payload pode vir {event, data} ou direto a mensagem
         const ev  = msg?.event || 'message';
         const out = msg?.data ?? msg;
+        // mantém `room` original no payload para o cliente
         send(ev, { room, ...out });
       };
-      pgBus.on(room, handler);
+      pgBus.on(channel, handler);
       offFns.push(async () => {
-        pgBus.off(room, handler);
-        await pgBus.unlisten(room);
+        pgBus.off(channel, handler);
+        await pgBus.unlisten(channel);
       });
     }
 
-    send('ready', { rooms: listenRooms });
+    send('ready', {
+      rooms: listenRooms,
+      channels: listenRooms.map(toChannel), // útil para debug
+    });
 
     req.raw.on('close', async () => {
       clearInterval(hb);
-      // remove handlers e baixa UNLISTEN conforme refCount
       for (const off of offFns) {
         try { await off(); } catch {}
       }
