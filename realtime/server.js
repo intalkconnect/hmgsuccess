@@ -4,6 +4,7 @@ import pg from 'pg';
 
 // PG (usa DATABASE_URL se existir; senão, variáveis PG*)
 const {
+  DATABASE_URL = process.env.DATABASE_URL,
   PORT = Number(process.env.SOCKET_PORT || 8080),
   PGHOST = process.env.PGHOST || 'localhost',
   PGPORT = process.env.PGPORT || 5432,
