@@ -34,12 +34,14 @@ async function buildServer() {
   // Registro global do suporte a uploads multipart/form-data
   await fastify.register(multipart)
 
+  await fastify.register(sseRoutes);
+
   await initDB()
   fastify.log.info('[initDB] Conexão com PostgreSQL estabelecida.') // Mensagem atualizada
 
   return fastify
 }
-await fastify.register(sseRoutes);
+
 
 async function start() {
   const fastify = await buildServer()
@@ -73,6 +75,7 @@ fastify.log.info('[start] Rotas registradas com sucesso.')
 }
 
 start()
+
 
 
 
