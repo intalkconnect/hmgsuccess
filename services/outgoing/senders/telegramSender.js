@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { initDB, dbPool } from '../../db.js';
-import { getIO } from '../../realtime/socketClient.js';
 
 const TG_TOKEN = process.env.TELEGRAM_TOKEN;
 const TG_BASE  = TG_TOKEN ? `https://api.telegram.org/bot${TG_TOKEN}` : null;
@@ -98,8 +97,6 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       `UPDATE messages SET status='sent', message_id=COALESCE($1, message_id), updated_at=NOW() WHERE message_id=$2`,
       [platformId, tempId]
     );
-
-    // getIO()?.to(`chat-${userId}`).emit('update_message', {...});
 
     return { ok: true, platformId };
   } catch (e) {
