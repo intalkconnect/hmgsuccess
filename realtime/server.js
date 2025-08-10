@@ -4,7 +4,7 @@ import pg from 'pg';
 
 // PG (usa DATABASE_URL se existir; senão, variáveis PG*)
 const {
-  PORT = Number(process.env.SOCKET_PORT || 8080);
+  PORT = Number(process.env.SOCKET_PORT || 8080),
   PGHOST = process.env.PGHOST || 'localhost',
   PGPORT = process.env.PGPORT || 5432,
   PGUSER = process.env.PGUSER || 'postgres',
