@@ -1,5 +1,4 @@
-// routes/sse.js
-import pg from 'pg';
+import { pgBus } from '../services/realtime/pgBus.js';
 
 export default async function sseRoutes(fastify) {
   fastify.get('/sse', async (req, reply) => {
@@ -8,6 +7,9 @@ export default async function sseRoutes(fastify) {
       .map(String)
       .filter(Boolean);
 
+    const listenRooms = rooms.length ? rooms : ['broadcast'];
+
+    // headers SSE
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -17,40 +19,40 @@ export default async function sseRoutes(fastify) {
     });
 
     const send = (event, data) => {
-      try {
-        reply.raw.write(`event: ${event}\n`);
-        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
-      } catch (_) {
-        // ignore write after end
-      }
+      reply.raw.write(`event: ${event}\n`);
+      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    const hb = setInterval(() => {
-      try { reply.raw.write(': ping\n\n'); } catch (_) {}
-    }, 15000);
+    const hb = setInterval(() => reply.raw.write(': ping\n\n'), 15000);
 
-    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-    await client.connect();
+    // garante que o bus está conectado
+    await pgBus.ready();
 
-    for (const room of rooms) {
-      await client.query(`LISTEN "${room}"`);
+    // registra listeners em memória + LISTEN refCount
+    const offFns = [];
+    for (const room of listenRooms) {
+      await pgBus.listen(room);
+      const handler = (msg) => {
+        // payload pode vir {event, data} ou direto a mensagem
+        const ev  = msg?.event || 'message';
+        const out = msg?.data ?? msg;
+        send(ev, { room, ...out });
+      };
+      pgBus.on(room, handler);
+      offFns.push(async () => {
+        pgBus.off(room, handler);
+        await pgBus.unlisten(room);
+      });
     }
-    await client.query(`LISTEN "broadcast"`);
 
-    client.on('notification', (msg) => {
-      try {
-        const payload = msg.payload ? JSON.parse(msg.payload) : {};
-        send(payload.event || 'message', { room: msg.channel, ...payload });
-      } catch {
-        send('message', { room: msg.channel, payload: msg.payload });
-      }
-    });
+    send('ready', { rooms: listenRooms });
 
     req.raw.on('close', async () => {
       clearInterval(hb);
-      try { await client.end(); } catch {}
+      // remove handlers e baixa UNLISTEN conforme refCount
+      for (const off of offFns) {
+        try { await off(); } catch {}
+      }
     });
-
-    send('ready', { rooms });
   });
 }
