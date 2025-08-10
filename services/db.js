@@ -9,25 +9,24 @@ export let dbPool;
 
 export const initDB = async () => {
   const connectionString = process.env.DATABASE_URL;
-
   if (!connectionString) {
     throw new Error('A variável de ambiente DATABASE_URL deve estar definida');
   }
 
+  // Permite SSL condicional (útil no Render/Heroku/etc.)
+  const useSSL = String(process.env.PGSSL || '').toLowerCase() === 'true';
   dbPool = new Pool({
     connectionString,
-    ssl: connectionString.includes('supabase') ? { rejectUnauthorized: false } : false,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    ssl: useSSL ? { rejectUnauthorized: false } : false,
+    max: Number(process.env.PG_MAX || 20),
+    idleTimeoutMillis: Number(process.env.PG_IDLE || 30000),
+    connectionTimeoutMillis: Number(process.env.PG_TIMEOUT || 2000),
   });
 
+  const client = await dbPool.connect();
   try {
-    const client = await dbPool.connect();
     await client.query('SELECT 1');
+  } finally {
     client.release();
-  } catch (error) {
-    console.error('Erro ao conectar no PostgreSQL dentro de initDB():', error);
-    throw error;
   }
 };
