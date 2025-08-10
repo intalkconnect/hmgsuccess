@@ -4,7 +4,6 @@ import amqplib from 'amqplib';
 import crypto from 'crypto';
 import { initDB } from './services/db.js';
 import { processEvent } from './services/high/processEvent.js';
-import { getIO } from './services/realtime/socketClient.js';
 
 const AMQP_URL       = process.env.AMQP_URL || 'amqp://guest:guest@localhost:5672/';
 const QUEUE          = process.env.INCOMING_QUEUE || 'hmg.incoming';
@@ -13,7 +12,6 @@ const MAX_RETRY      = Number(process.env.MAX_RETRIES || 5);
 const RETRY_DELAY_MS = Number(process.env.RETRY_DELAY_MS || 0); // 0 = sem delay (a menos que use delayed-exchange)
 
 let conn, ch, closing = false;
-const io = getIO();
 
 const now = () => new Date().toISOString();
 const redact = (u) => String(u).replace(/(\/\/[^:]+:)([^@]+)(@)/, '$1***$3');
@@ -86,7 +84,7 @@ async function onMessage(msg) {
 
   const t0 = Date.now();
   try {
-    const status = await processEvent(evt, { io });
+    const status = await processEvent(evt);
     const dt = Date.now() - t0;
 
     if (status === 'duplicate') {
