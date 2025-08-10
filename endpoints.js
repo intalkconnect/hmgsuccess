@@ -2,7 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import dotenv from 'dotenv'
-import { Server as IOServer } from 'socket.io'
+import sseRoutes from './routes/sse.js';
 
 import whatsappWebhook from './routes/whatsappWebhook.js'
 import telegramWebhook from './routes/telegramWebhook.js';
@@ -39,6 +39,7 @@ async function buildServer() {
 
   return fastify
 }
+await fastify.register(sseRoutes);
 
 async function start() {
   const fastify = await buildServer()
@@ -72,6 +73,7 @@ fastify.log.info('[start] Rotas registradas com sucesso.')
 }
 
 start()
+
 
 
 
