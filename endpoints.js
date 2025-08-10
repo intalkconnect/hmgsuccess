@@ -47,50 +47,6 @@ async function start() {
     cors: { origin: '*' }
   })
 
-  fastify.decorate('io', io)
-
-  io.on('connection', (socket) => {
-    fastify.log.info(`[Socket.IO] Cliente conectado: ${socket.id}`)
-
-    socket.on('join_room', (userId) => {
-      const normalizedId = userId.includes('@') ? userId : `${userId}@w.msgcli.net`
-      socket.join(`chat-${normalizedId}`)
-      fastify.log.info(`[Socket.IO] Socket ${socket.id} entrou na sala chat-${normalizedId}`)
-    })
-
-    socket.on('leave_room', (userId) => {
-      socket.leave(`chat-${userId}`)
-      fastify.log.info(`[Socket.IO] Socket ${socket.id} saiu da sala chat-${userId}`)
-    })
-
-    socket.on('disconnect', async (reason) => {
-      fastify.log.info(
-        `[Socket.IO] Cliente desconectado: ${socket.id} (reason=${reason})`
-      )
-      try {
-        // Atualiza status via sessionId
-        await fastify.inject({
-          method: 'PUT',
-          url: `/api/v1/atendentes/status/${socket.id}`
-        })
-        fastify.log.info(
-          `[Session] Sessão ${socket.id} marcada como offline`
-        )
-      } catch (err) {
-        fastify.log.error(err, 'Erro ao atualizar sessão offline')
-      }
-    })
-
-    socket.on('identify', ({ email, rooms }) => {
-  rooms.forEach(room => {
-    socket.join(`chat-${room}`);
-    fastify.log.info(`[Socket.IO] ${email} entrou na sala chat-${room}`);
-  });
-});
-
-    
-  })
-
 fastify.log.info('[start] Registrando rotas...')
 fastify.register(messageRoutes, { prefix: '/api/v1/messages' })
 fastify.register(chatsRoutes, { prefix: '/api/v1/chats' })
@@ -116,5 +72,6 @@ fastify.log.info('[start] Rotas registradas com sucesso.')
 }
 
 start()
+
 
 
