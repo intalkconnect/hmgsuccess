@@ -1,13 +1,10 @@
 // services/high/processEvent.js
 import crypto from 'crypto';
-import { dbPool } from '../db.js'; // já inicializado no worker via initDB()
+import { dbPool } from '../db.js';
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
-import { emitToRoom } from '../realtime/emitToRoom.js';
 
-// (opcional) se tiver no seu projeto:
-// import { markMessageAsRead } from '../wa/markMessageAsRead.js';
-
+// ----- helpers --------------------------------------------------------------
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
   return joined || `gen:${channel}:${crypto.randomUUID()}`;
@@ -45,13 +42,21 @@ async function upsertIncomingMessage({ channel, userId, messageId, msgType, cont
   return res.rows?.[0]; // undefined => duplicate
 }
 
+async function pgNotify(channel, payload) {
+  try {
+    await dbPool.query('SELECT pg_notify($1, $2)', [channel, JSON.stringify(payload)]);
+  } catch (e) {
+    console.warn(`[NOTIFY ${channel}] falhou:`, e?.message || e);
+  }
+}
+
 async function getActiveFlow() {
   const { rows } = await dbPool.query(`SELECT * FROM flows WHERE active = true LIMIT 1`);
   return rows[0]?.data || null;
 }
 
-// -------- WhatsApp --------
-async function processWhatsApp(evt, { io } = {}) {
+// ----- WhatsApp -------------------------------------------------------------
+async function processWhatsApp(evt) {
   const value = evt?.payload?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return 'duplicate';
   const msg = value?.messages?.[0];
@@ -59,7 +64,7 @@ async function processWhatsApp(evt, { io } = {}) {
 
   const from        = value?.contacts?.[0]?.wa_id;
   const profileName = value?.contacts?.[0]?.profile?.name || 'usuário';
-  const userId      = `${from}@w.msgcli.net`;  // room no front
+  const userId      = `${from}@w.msgcli.net`;
   const msgType     = msg.type;
 
   const { content, userMessage } = await processMediaIfNeeded('whatsapp', { msg });
@@ -76,11 +81,9 @@ async function processWhatsApp(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  // try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
-
-  // envia para a SALA correta (somente esse cliente vê)
-  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
-  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
+  // 🔔 SSE via PG
+  await pgNotify('new_message', inserted);
+  await pgNotify('bot_processing', { user_id: userId, status: 'processing' });
 
   const flow = await getActiveFlow();
   const outgoing = await runFlow({
@@ -95,18 +98,17 @@ async function processWhatsApp(evt, { io } = {}) {
       lastMessageId: msg.id
     },
     rawUserId: from,
-    io
   });
 
   if (outgoing?.user_id) {
-    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
+    await pgNotify('new_message', outgoing);
   }
   return 'ok';
 }
 
-// -------- Telegram --------
-async function processTelegram(evt, { io } = {}) {
-  const update = evt?.payload;
+// ----- Telegram -------------------------------------------------------------
+async function processTelegram(evt) {
+  const update  = evt?.payload;
   if (!update) return 'duplicate';
 
   const message = update.message || update.callback_query?.message;
@@ -133,8 +135,8 @@ async function processTelegram(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
-  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
+  await pgNotify('new_message', inserted);
+  await pgNotify('bot_processing', { user_id: userId, status: 'processing' });
 
   const flow = await getActiveFlow();
   const outgoing = await runFlow({
@@ -148,20 +150,19 @@ async function processTelegram(evt, { io } = {}) {
       now: new Date().toISOString()
     },
     rawUserId: String(chatId),
-    io
   });
 
   if (outgoing?.user_id) {
-    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
+    await pgNotify('new_message', outgoing);
   }
   return 'ok';
 }
 
-// -------- Router --------
-export async function processEvent(evt, { io } = {}) {
+// ----- Router ---------------------------------------------------------------
+export async function processEvent(evt) {
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
-  if (ch === 'whatsapp') return processWhatsApp(evt, { io });
-  if (ch === 'telegram') return processTelegram(evt, { io });
+  if (ch === 'whatsapp') return processWhatsApp(evt);
+  if (ch === 'telegram') return processTelegram(evt);
   return 'ok';
 }
