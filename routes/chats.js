@@ -1,7 +1,5 @@
 
 // routes/chatsRoutes.js
-import { dbPool } from '../services/db.js';
-
 async function chatsRoutes(fastify, options) {
   fastify.get('/', async (req, reply) => {
     const { assigned_to, filas } = req.query;
@@ -15,7 +13,7 @@ async function chatsRoutes(fastify, options) {
     const filaList = filas.split(',').map((f) => f.trim());
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `
 SELECT 
   t.user_id,
@@ -70,7 +68,7 @@ ORDER BY t.created_at DESC;
   const filaList = filas.split(',').map((f) => f.trim());
 
   try {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `
       SELECT 
         t.id,
@@ -106,7 +104,7 @@ ORDER BY t.created_at DESC;
   }
 
   try {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `
       UPDATE tickets
       SET assigned_to = $1
