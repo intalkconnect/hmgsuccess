@@ -2,7 +2,7 @@ import 'dotenv/config';
 import amqplib from 'amqplib';
 import { dispatchOutgoing } from './services/outgoing/dispatcher.js';
 
-const AMQP_URL       = process.env.AMQP_URL || 'amqp://guest:guest@rabbit:5672/';
+const AMQP_URL       = process.env.AMQP_URL || 'amqp://guest:guest@rabbitmq:5672/';
 const QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outgoing';
 const PREFETCH       = Number(process.env.PREFETCH || 50);
 
