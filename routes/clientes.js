@@ -1,5 +1,3 @@
-import { dbPool } from '../services/db.js';
-
 function isValidUserId(userId) {
   return /^[^@]+@[^@]+\.[^@]+$/.test(userId);
 }
@@ -17,7 +15,7 @@ async function clientesRoutes(fastify, options) {
   }
 
   try {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `
       SELECT 
         c.*, 
@@ -61,7 +59,7 @@ async function clientesRoutes(fastify, options) {
     }
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `UPDATE clientes 
          SET name = $1, phone = $2, updated_at = NOW()
          WHERE user_id = $3
@@ -101,7 +99,7 @@ async function clientesRoutes(fastify, options) {
         .map((key, i) => `${key} = $${i + 1}`)
         .join(', ');
 
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `UPDATE clientes 
          SET ${setClauses}, updated_at = NOW()
          WHERE user_id = $${Object.keys(updates).length + 1}
@@ -127,7 +125,7 @@ async function clientesRoutes(fastify, options) {
     const { user_id } = req.params;
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `DELETE FROM clientes WHERE user_id = $1`,
         [user_id]
       );
