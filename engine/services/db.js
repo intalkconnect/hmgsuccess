@@ -1,58 +1,71 @@
 // services/db.js
 import pg from 'pg';
 import dotenv from 'dotenv';
-
 dotenv.config();
 
 const { Pool } = pg;
 
-// ⚙️ Schema padrão (fixe "hmg" aqui ou use PG_SCHEMA=hmg no .env)
-const PG_SCHEMA = process.env.PG_SCHEMA || 'hmg';
-
-// Escapa identificadores para uso no SET search_path
-function ident(s) {
-  return /^[a-z0-9_]+$/.test(String(s)) ? s : `"${String(s).replace(/"/g, '""')}"`;
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error('DATABASE_URL não definido');
 }
 
-export let dbPool = null;
+// ⛳️ defina PG_SCHEMA=hmg (ou o schema do tenant que este processo atende)
+const PG_SCHEMA = (process.env.PG_SCHEMA || 'public').trim();
 
-export const initDB = async () => {
+function pgIdent(id) {
+  return /^[a-z0-9_]+$/.test(id) ? id : `"${String(id).replace(/"/g, '""')}"`;
+}
+
+export let dbPool;
+
+export async function initDB() {
   if (dbPool) return dbPool;
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error('A variável de ambiente DATABASE_URL deve estar definida');
-  }
-
   dbPool = new Pool({
-    connectionString,
-    // Supabase normalmente exige SSL (cert self-signed)
-    ssl: connectionString.includes('supabase') ? { rejectUnauthorized: false } : false,
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL.includes('supabase') ? { rejectUnauthorized: false } : false,
     max: Number(process.env.PG_MAX || 20),
-    idleTimeoutMillis: Number(process.env.PG_IDLE || 30000),
-    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT || 2000),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000
   });
 
-  // Toda conexão recém-criada entra com search_path = <PG_SCHEMA>,public
+  // Toda conexão do pool já nasce com o search_path correto
   dbPool.on('connect', (client) => {
-    client
-      .query(`SET search_path TO ${ident(PG_SCHEMA)}, public`)
-      .catch((e) => console.error('[db] SET search_path falhou:', e?.message));
+    client.query(`SET search_path TO ${pgIdent(PG_SCHEMA)}, public`).catch((e) => {
+      console.error('[db] falha ao SET search_path:', e?.message);
+    });
   });
 
-  // Validação simples de conectividade + log do search_path efetivo
+  // Sanidade
+  const c = await dbPool.connect();
   try {
-    const client = await dbPool.connect();
-    try {
-      const res = await client.query('SHOW search_path');
-      console.log('[db] Conectado. search_path =', res.rows?.[0]?.search_path);
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error('Erro ao conectar no PostgreSQL dentro de initDB():', error);
-    throw error;
+    await c.query('SELECT 1');
+    // reforça o search_path na primeira vez
+    await c.query(`SET search_path TO ${pgIdent(PG_SCHEMA)}, public`);
+  } finally {
+    c.release();
   }
 
+  console.log(`[db] conectado. search_path=${PG_SCHEMA},public`);
   return dbPool;
-};
+}
+
+// helpers opcionais (se quiser usar padrão query/tx)
+export const query = (text, params) => dbPool.query(text, params);
+export async function tx(fn) {
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    // por segurança, reforça dentro da tx
+    await client.query(`SET LOCAL search_path TO ${pgIdent(PG_SCHEMA)}, public`);
+    const out = await fn(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
