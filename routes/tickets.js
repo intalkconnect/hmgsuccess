@@ -1,5 +1,3 @@
-import { dbPool } from '../services/db.js';
-
 async function ticketsRoutes(fastify, options) {
   // Validação simples do formato do user_id
   function isValidUserId(user_id) {
@@ -17,7 +15,7 @@ async function ticketsRoutes(fastify, options) {
     }
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `SELECT status, fila, assigned_to
          FROM tickets
          WHERE user_id = $1 AND status = 'open'`,
@@ -48,7 +46,7 @@ async function ticketsRoutes(fastify, options) {
   }
 
   try {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `SELECT id, ticket_number, user_id, created_at 
        FROM tickets
        WHERE user_id = $1 AND status = 'closed'
@@ -108,7 +106,7 @@ async function ticketsRoutes(fastify, options) {
     values.push(user_id); // Para o WHERE
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `UPDATE tickets
          SET ${updates.join(', ')}, updated_at = NOW()
          WHERE user_id = $${index}`,
@@ -136,7 +134,7 @@ async function ticketsRoutes(fastify, options) {
     return reply.code(400).send({ error: 'Campos obrigatórios: from_user_id, to_fila, transferido_por' });
   }
 
-  const client = await dbPool.connect();
+  const client = await req.db.connect();
   try {
     await client.query('BEGIN');
 
