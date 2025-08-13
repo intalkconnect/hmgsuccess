@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { initDB, dbPool } from '../../db.js';         // se preferir, o initDB pode ser feito na app principal e removido daqui
+import { initDB, dbPool } from '../../../engine/services/db.js';         // se preferir, o initDB pode ser feito na app principal e removido daqui
 import { getIO } from '../../realtime/socketClient.js';
 
 const API_VERSION     = process.env.API_VERSION || 'v22.0';
