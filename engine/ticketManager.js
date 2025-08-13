@@ -1,5 +1,5 @@
 // engine/ticketManager.js (ou onde está seu distribuirTicket)
-import { dbPool } from '../services/db.js';
+import { dbPool } from './services/db.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // 🔧 Helper: monta o user_id persistido por canal
