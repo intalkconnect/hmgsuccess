@@ -1,6 +1,5 @@
 // routes/messages.js
 import amqplib from 'amqplib';
-import { dbPool } from '../services/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -39,8 +38,8 @@ function formatUserId(to, channel = 'whatsapp') {
 }
 
 // checagem 24h (como o antigo)
-async function within24h(userId) {
-  const { rows } = await dbPool.query(
+async function within24h(req, userId) {
+  const { rows } = await req.db.query(
     `SELECT timestamp
        FROM messages
       WHERE user_id = $1 AND direction = 'incoming'
@@ -79,7 +78,7 @@ export default async function messagesRoutes(fastify) {
     const dbContent = type === 'text' ? content.body : JSON.stringify(content);
 
     // grava PENDING
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO messages (
          user_id, message_id, direction, type, content, timestamp,
          flow_id, reply_to, status, metadata, created_at, updated_at, channel
@@ -127,7 +126,7 @@ export default async function messagesRoutes(fastify) {
 
     // grava PENDING no DB
     const meta = JSON.stringify({ languageCode, components });
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO messages (
          user_id, message_id, direction, type, content,
          timestamp, status, metadata, created_at, updated_at, channel
@@ -175,7 +174,7 @@ export default async function messagesRoutes(fastify) {
     const { last_read } = req.body || {};
     if (!last_read) return reply.code(400).send({ error: 'last_read é obrigatório' });
 
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO user_last_read (user_id, last_read)
        VALUES ($1, $2)
        ON CONFLICT (user_id)
@@ -188,7 +187,7 @@ export default async function messagesRoutes(fastify) {
 
   // GET /api/v1/messages/read-status  (o front chama isso)
   fastify.get('/read-status', async () => {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `SELECT user_id, last_read FROM user_last_read`
     );
     // pode devolver array mesmo (o front só precisa de mapa/array)
@@ -197,7 +196,7 @@ export default async function messagesRoutes(fastify) {
 
   // GET /api/v1/messages/unread-counts  (compat com antigo)
   fastify.get('/unread-counts', async () => {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `
       SELECT 
         m.user_id,
@@ -218,7 +217,7 @@ export default async function messagesRoutes(fastify) {
   // GET /api/v1/messages/:user_id  (DEIXE POR ÚLTIMO)
   fastify.get('/:user_id', async (req, reply) => {
     const userId = decode(req.params.user_id);
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `SELECT * FROM messages
         WHERE user_id = $1
         ORDER BY timestamp ASC;`,
@@ -227,3 +226,4 @@ export default async function messagesRoutes(fastify) {
     return rows;
   });
 }
+
