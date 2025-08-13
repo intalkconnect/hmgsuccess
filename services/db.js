@@ -14,25 +14,38 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
-// (compat eventual com código legado que ainda importe dbPool)
+// Alias p/ código legado que ainda importa { dbPool }
 export const dbPool = pool;
 
 /**
- * Resolve o subdomínio a partir do host (ex.: hmg.dkdevs.com.br -> 'hmg').
- * Funciona com/sem BASE_DOMAIN:
- *  - Se BASE_DOMAIN=dkdevs.com.br estiver setado, valida exatamente esse sufixo.
- *  - Sem BASE_DOMAIN, cai num fallback: se houver >= 3 labels, usa o 1º como subdomínio.
- * Ignora 'www' e hosts que são IP/localhost.
+ * Compat: inicializa a pool e testa a conexão.
+ * Seu worker pode continuar fazendo: import { initDB } from './services/db.js';
  */
-export function extractSubdomain(hostHeader, baseDomain = process.env.BASE_DOMAIN) {
+export async function initDB() {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT 1'); // sanity check
+    return pool;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Resolve o subdomínio a partir do Host (ex.: hmg.dkdevs.com.br -> 'hmg')
+ * - Se BASE_DOMAIN for informado (ex.: dkdevs.com.br), valida esse sufixo.
+ * - Sem BASE_DOMAIN, fallback: se houver >=3 labels, usa a 1ª (ignora 'www').
+ */
+export function extractSubdomain(
+  hostHeader,
+  baseDomain = process.env.BASE_DOMAIN
+) {
   if (!hostHeader) return null;
   const host = hostHeader.split(':')[0].toLowerCase().trim();
   if (!host) return null;
 
-  // ignora IPs/localhost
   if (isIPAddress(host) || host === 'localhost') return null;
 
-  // caminho preferido: BASE_DOMAIN definido (ex.: dkdevs.com.br)
   if (baseDomain && baseDomain.trim()) {
     const bd = baseDomain.toLowerCase().trim();
     if (host === bd) return null;
@@ -41,11 +54,9 @@ export function extractSubdomain(hostHeader, baseDomain = process.env.BASE_DOMAI
       const sub = host.slice(0, -suffix.length);
       return sub && sub !== 'www' ? sub : null;
     }
-    // se não bate o domínio base, não assume nada
     return null;
   }
 
-  // fallback: 3+ labels -> pega o primeiro
   const parts = host.split('.');
   if (parts.length >= 3) {
     const sub = parts[0];
@@ -56,15 +67,14 @@ export function extractSubdomain(hostHeader, baseDomain = process.env.BASE_DOMAI
 }
 
 function isIPAddress(h) {
-  // IPv4 simples
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true;
-  // IPv6 simples (com dois-pontos)
-  if (h.includes(':')) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true; // IPv4
+  if (h.includes(':')) return true; // IPv6 simplificado
   return false;
 }
 
 /**
  * Busca no catálogo global o schema correspondente ao subdomínio.
+ * Necessita da tabela public.tenants (bootstrap SQL).
  */
 export async function lookupSchemaBySubdomain(subdomain) {
   if (!subdomain) return null;
@@ -99,6 +109,6 @@ export async function withTenant(schema, fn) {
  * (equivalente a format('%I', ident) do Postgres).
  */
 function pgFormatIdent(ident) {
-  if (/^[a-z0-9_]+$/.test(ident)) return ident; // simples e rápido
+  if (/^[a-z0-9_]+$/.test(ident)) return ident;
   return `"${String(ident).replace(/"/g, '""')}"`;
 }
