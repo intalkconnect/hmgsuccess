@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { initDB, dbPool } from '../../db.js';
+import { initDB, dbPool } from '../../../engine/services/db.js';
 import { getIO } from '../../realtime/socketClient.js';
 
 const TG_TOKEN = process.env.TELEGRAM_TOKEN;
