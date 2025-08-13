@@ -1,4 +1,4 @@
-import { dbPool } from '../services/db.js';
+import { dbPool } from './services/db.js';
 
 export async function loadSession(userId) {
   try {
