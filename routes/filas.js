@@ -1,5 +1,3 @@
-import { dbPool } from '../services/db.js';
-
 async function filaRoutes(fastify, options) {
   // ➕ Criar nova fila
   fastify.post('/', async (req, reply) => {
@@ -7,7 +5,7 @@ async function filaRoutes(fastify, options) {
     if (!nome) return reply.code(400).send({ error: 'Nome da fila é obrigatório' });
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         'INSERT INTO filas (nome) VALUES ($1) RETURNING *',
         [nome]
       );
@@ -23,7 +21,7 @@ fastify.get('/atendentes/:fila_nome', async (req, reply) => {
   const { fila_nome } = req.params;
 
   try {
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `
       SELECT id, name, lastname, email, status
       FROM atendentes
@@ -53,7 +51,7 @@ fastify.get('/atendentes/:fila_nome', async (req, reply) => {
   // 📥 Listar todas as filas
   fastify.get('/', async (_, reply) => {
     try {
-      const { rows } = await dbPool.query('SELECT * FROM filas ORDER BY nome');
+      const { rows } = await req.db.query('SELECT * FROM filas ORDER BY nome');
       return reply.send(rows);
     } catch (err) {
       fastify.log.error(err);
@@ -68,7 +66,7 @@ fastify.get('/atendentes/:fila_nome', async (req, reply) => {
       return reply.code(400).send({ error: 'usuario_email e fila_id são obrigatórios' });
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `
         INSERT INTO fila_permissoes (usuario_email, fila_id, pode_transferir)
         VALUES ($1, $2, $3)
@@ -90,7 +88,7 @@ fastify.get('/atendentes/:fila_nome', async (req, reply) => {
     const { email } = req.params;
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `
         SELECT f.id, f.nome, p.pode_transferir
         FROM fila_permissoes p
