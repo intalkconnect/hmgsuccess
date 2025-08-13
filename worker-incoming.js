@@ -1,7 +1,7 @@
 // worker.js
 import 'dotenv/config';
 import amqplib from 'amqplib';
-import { initDB } from './services/db.js';
+import { initDB } from './engine/services/db.js';
 import { processEvent } from './services/high/processEvent.js';
 import { getIO } from './services/realtime/socketClient.js';
 
