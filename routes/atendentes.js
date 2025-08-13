@@ -1,10 +1,8 @@
-import { dbPool } from '../services/db.js';
-
 async function atendentesRoutes(fastify, _options) {
   // 🔄 Listar todos os atendentes
   fastify.get('/', async (_, reply) => {
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `SELECT id, name, lastname, email, status, filas, created_at FROM atendentes ORDER BY name`
       );
       return reply.send(rows);
@@ -18,7 +16,7 @@ async function atendentesRoutes(fastify, _options) {
   fastify.get('/:email', async (req, reply) => {
     const { email } = req.params;
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `SELECT id, name, lastname, email, status, filas, created_at FROM atendentes WHERE email = $1`,
         [email]
       );
@@ -39,7 +37,7 @@ async function atendentesRoutes(fastify, _options) {
     }
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `INSERT INTO atendentes (name, lastname, email, filas)
          VALUES ($1, $2, $3, $4)
          RETURNING id, name, lastname, email, status, filas, created_at`,
@@ -62,7 +60,7 @@ async function atendentesRoutes(fastify, _options) {
     }
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `UPDATE atendentes
          SET name = $1, lastname = $2, email = $3, filas = $4
          WHERE id = $5`,
@@ -88,7 +86,7 @@ async function atendentesRoutes(fastify, _options) {
     }
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `UPDATE atendentes
          SET session_id = $2
          WHERE email = $1`,
@@ -109,7 +107,7 @@ async function atendentesRoutes(fastify, _options) {
     const { id } = req.params;
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `DELETE FROM atendentes WHERE id = $1`,
         [id]
       );
@@ -132,7 +130,7 @@ async function atendentesRoutes(fastify, _options) {
     }
 
     try {
-      const { rowCount } = await dbPool.query(
+      const { rowCount } = await req.db.query(
         `UPDATE atendentes
 SET session_id = NULL
 WHERE session_id = $1;
