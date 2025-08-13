@@ -7,12 +7,13 @@ export default fp(async function tenantPlugin(fastify) {
   fastify.decorateRequest('db', null);
 
   fastify.addHook('onRequest', async (req, reply) => {
-    // permite bypass para healthz e rotas públicas, se quiser
     if (req.url === '/healthz') return;
 
-    const sub = extractSubdomain(req.headers.host);
-    const schema = await lookupSchemaBySubdomain(sub);
+    // 1) tenta header x-tenant; 2) cai pro subdomínio
+    const headerTenant = (req.headers['x-tenant'] || '').trim().toLowerCase();
+    const sub = headerTenant || extractSubdomain(req.headers.host);
 
+    const schema = await lookupSchemaBySubdomain(sub);
     if (!schema) {
       req.log.warn({ host: req.headers.host, sub }, 'tenant não encontrado');
       return reply.code(404).send({ ok: false, error: 'tenant_not_found' });
@@ -20,18 +21,9 @@ export default fp(async function tenantPlugin(fastify) {
 
     req.tenant = { subdomain: sub, schema };
 
-    // cria um "executor" por-req:
+    // executores por request
     req.db = {
-      /**
-       * Executa uma função recebendo um "client" do pg,
-       * já com search_path do tenant configurado.
-       * Uso: await req.db.tx(client => client.query(...))
-       */
       tx: (fn) => withTenant(schema, fn),
-
-      /**
-       * Açúcar sintático pra uma única query.
-       */
       query: (text, params) => withTenant(schema, (c) => c.query(text, params)),
     };
   });
