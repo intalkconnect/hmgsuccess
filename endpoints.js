@@ -8,8 +8,6 @@ import dotenv from 'dotenv';
 import tenantPlugin from './plugins/tenant.js';
 
 // rotas
-import whatsappWebhook from './routes/whatsappWebhook.js';
-import telegramWebhook from './routes/telegramWebhook.js';
 import messageRoutes from './routes/messages.js';
 import flowRoutes from './routes/flow.js';
 import uploadRoutes from './routes/uploadRoutes.js';
@@ -55,10 +53,6 @@ async function buildServer() {
   fastify.register(atendentesRoutes, { prefix: '/api/v1/atendentes' });
   fastify.register(quickRepliesRoutes, { prefix: '/api/v1/quickReplies' });
 
-  // webhooks (se forem por tenant, eles também usarão req.db)
-  fastify.register(whatsappWebhook, { prefix: '/api/v1/webhooks/whatsapp' });
-  fastify.register(telegramWebhook, { prefix: '/api/v1/webhooks/telegram' });
-
   return fastify;
 }
 
@@ -77,3 +71,4 @@ async function start() {
 }
 
 start();
+
