@@ -4,7 +4,7 @@ async function settingsRoutes(fastify, options) {
     try {
       const { rows } = await req.db.query(
         `SELECT 
-           key,
+           "key",
            value,
            description,
            created_at,
@@ -34,9 +34,9 @@ async function settingsRoutes(fastify, options) {
 
     try {
       const { rows } = await req.db.query(
-        `INSERT INTO settings (key, value, description)
+        `INSERT INTO settings ("key", value, description)
          VALUES ($1, $2, $3)
-         ON CONFLICT (key) 
+         ON CONFLICT ("key") 
          DO UPDATE SET 
            value = EXCLUDED.value,
            description = EXCLUDED.description,
