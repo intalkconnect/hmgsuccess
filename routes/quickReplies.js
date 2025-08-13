@@ -1,8 +1,8 @@
-
-async function quickReplyRoutes(fastify, options) {
+// routes/quickReplies.js
+export default async function quickReplyRoutes(fastify) {
   // ➕ Criar nova resposta rápida
   fastify.post('/', async (req, reply) => {
-    const { title, content } = req.body;
+    const { title, content } = req.body || {};
     if (!title || !content) {
       return reply.code(400).send({ error: 'title e content são obrigatórios' });
     }
@@ -20,7 +20,7 @@ async function quickReplyRoutes(fastify, options) {
   });
 
   // 📄 Listar todas as respostas rápidas
-  fastify.get('/', async (_, reply) => {
+  fastify.get('/', async (req, reply) => {
     try {
       const { rows } = await req.db.query(
         'SELECT id, title, content FROM quick_replies ORDER BY title'
@@ -45,5 +45,3 @@ async function quickReplyRoutes(fastify, options) {
     }
   });
 }
-
-export default quickReplyRoutes;
