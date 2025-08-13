@@ -1,10 +1,8 @@
-import { dbPool } from '../services/db.js';
-
 async function settingsRoutes(fastify, options) {
   // Rota GET /settings - Retorna todas as configurações
   fastify.get('/', async (req, reply) => {
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `SELECT 
            key,
            value,
@@ -35,7 +33,7 @@ async function settingsRoutes(fastify, options) {
     }
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         `INSERT INTO settings (key, value, description)
          VALUES ($1, $2, $3)
          ON CONFLICT (key) 
