@@ -1,4 +1,4 @@
-import { dbPool } from '../services/db.js'
+import { dbPool } from './services/db.js'
 import { randomUUID } from 'crypto'
 
 export async function logOutgoingMessage(userId, type, content, flowId) {
