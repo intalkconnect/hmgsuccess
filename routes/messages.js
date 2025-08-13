@@ -1,6 +1,5 @@
 // routes/messages.js
 import amqplib from 'amqplib';
-import { dbPool } from '../engine/services/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -20,7 +19,7 @@ async function ensureAMQP() {
 
 const decode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 
-// igual ao antigo
+// valida payload
 function validateContent(type, content, channel) {
   if (!type) throw new Error('Message type is required');
   if (type === 'text') {
@@ -38,13 +37,13 @@ function formatUserId(to, channel = 'whatsapp') {
   return channel === 'telegram' ? `${to}@t.msgcli.net` : `${to}@w.msgcli.net`;
 }
 
-// checagem 24h (como o antigo)
-async function within24h(userId) {
-  const { rows } = await dbPool.query(
-    `SELECT timestamp
+// checagem 24h usando o DB do tenant
+async function within24h(db, userId) {
+  const { rows } = await db.query(
+    `SELECT "timestamp"
        FROM messages
       WHERE user_id = $1 AND direction = 'incoming'
-      ORDER BY timestamp DESC
+      ORDER BY "timestamp" DESC
       LIMIT 1`,
     [userId]
   );
@@ -58,8 +57,7 @@ export default async function messagesRoutes(fastify) {
 
   // ===================== ENVIO =====================
 
-  // POST /api/v1/messages/send   (mantida a rota do antigo)
-  // Agora: grava 'pending' e publica no Rabbit (hmg.outcoming)
+  // POST /api/v1/messages/send
   fastify.post('/send', async (req, reply) => {
     const { to, type, content, context, channel = 'whatsapp' } = req.body || {};
     if (!to || !type) return reply.code(400).send({ error: 'Recipient and type are required' });
@@ -67,9 +65,9 @@ export default async function messagesRoutes(fastify) {
 
     const userId = formatUserId(to, channel);
 
-    // 24h só p/ WhatsApp (mantendo comportamento do antigo)
+    // 24h apenas p/ WhatsApp
     if (channel === 'whatsapp') {
-      const ok = await within24h(userId);
+      const ok = await within24h(req.db, userId);
       if (!ok) {
         return reply.code(400).send({ error: 'Outside 24h window. Use an approved template.' });
       }
@@ -78,10 +76,9 @@ export default async function messagesRoutes(fastify) {
     const tempId = uuidv4();
     const dbContent = type === 'text' ? content.body : JSON.stringify(content);
 
-    // grava PENDING
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO messages (
-         user_id, message_id, direction, type, content, timestamp,
+         user_id, message_id, direction, "type", "content", "timestamp",
          flow_id, reply_to, status, metadata, created_at, updated_at, channel
        ) VALUES ($1,$2,'outgoing',$3,$4,NOW(),
                  NULL, $5, 'pending', NULL, NOW(), NOW(), $6)
@@ -90,15 +87,14 @@ export default async function messagesRoutes(fastify) {
     );
     const pending = rows[0];
 
-    // publica no Rabbit
     const ch = await ensureAMQP();
     ch.sendToQueue(
       OUTGOING_QUEUE,
       Buffer.from(JSON.stringify({
         tempId,
         channel,
-        to,              // cru (sem sufixo) pro worker decidir como normalizar
-        userId,          // completo, pra correlacionar no DB/socket
+        to,
+        userId,
         type,
         content,
         context
@@ -106,7 +102,7 @@ export default async function messagesRoutes(fastify) {
       { persistent: true, headers: { 'x-attempts': 0 } }
     );
 
-    // emite pra UI (opcional, mas ajuda)
+    // emit opcional (se existir socket na app)
     try {
       fastify.io?.to(`chat-${userId}`).emit('new_message', pending);
       fastify.io?.emit('new_message', pending);
@@ -115,7 +111,7 @@ export default async function messagesRoutes(fastify) {
     return reply.send({ success: true, enqueued: true, message: pending, channel });
   });
 
-  // POST /api/v1/messages/send/template  (mesma rota do antigo; agora vai via fila)
+  // POST /api/v1/messages/send/template
   fastify.post('/send/template', async (req, reply) => {
     const { to, templateName, languageCode, components } = req.body || {};
     if (!to || !templateName || !languageCode) {
@@ -125,12 +121,11 @@ export default async function messagesRoutes(fastify) {
     const userId = formatUserId(to, channel);
     const tempId = uuidv4();
 
-    // grava PENDING no DB
     const meta = JSON.stringify({ languageCode, components });
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO messages (
-         user_id, message_id, direction, type, content,
-         timestamp, status, metadata, created_at, updated_at, channel
+         user_id, message_id, direction, "type", "content",
+         "timestamp", status, metadata, created_at, updated_at, channel
        ) VALUES ($1,$2,'outgoing','template',$3,
                  NOW(),'pending',$4,NOW(),NOW(),$5)
        RETURNING *`,
@@ -138,7 +133,6 @@ export default async function messagesRoutes(fastify) {
     );
     const pending = rows[0];
 
-    // publica no Rabbit (workerOut monta payload do template)
     const ch = await ensureAMQP();
     ch.sendToQueue(
       OUTGOING_QUEUE,
@@ -162,20 +156,20 @@ export default async function messagesRoutes(fastify) {
 
   // ===================== STATUS / CONTAGEM =====================
 
-  // GET /api/v1/messages/check-24h/:user_id   (compat com antigo)
+  // GET /api/v1/messages/check-24h/:user_id
   fastify.get('/check-24h/:user_id', async (req) => {
     const userId = decode(req.params.user_id);
-    const ok = await within24h(userId);
-    return { within24h: ok, can_send_freeform: ok, lastIncoming: ok ? undefined : undefined };
+    const ok = await within24h(req.db, userId);
+    return { within24h: ok, can_send_freeform: ok };
   });
 
-  // PUT /api/v1/messages/read-status/:user_id  (mantém user_last_read)
+  // PUT /api/v1/messages/read-status/:user_id
   fastify.put('/read-status/:user_id', async (req, reply) => {
     const userId = decode(req.params.user_id);
     const { last_read } = req.body || {};
     if (!last_read) return reply.code(400).send({ error: 'last_read é obrigatório' });
 
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `INSERT INTO user_last_read (user_id, last_read)
        VALUES ($1, $2)
        ON CONFLICT (user_id)
@@ -186,18 +180,17 @@ export default async function messagesRoutes(fastify) {
     return rows[0];
   });
 
-  // GET /api/v1/messages/read-status  (o front chama isso)
-  fastify.get('/read-status', async () => {
-    const { rows } = await dbPool.query(
+  // GET /api/v1/messages/read-status
+  fastify.get('/read-status', async (req) => {
+    const { rows } = await req.db.query(
       `SELECT user_id, last_read FROM user_last_read`
     );
-    // pode devolver array mesmo (o front só precisa de mapa/array)
     return rows;
   });
 
-  // GET /api/v1/messages/unread-counts  (compat com antigo)
-  fastify.get('/unread-counts', async () => {
-    const { rows } = await dbPool.query(
+  // GET /api/v1/messages/unread-counts
+  fastify.get('/unread-counts', async (req) => {
+    const { rows } = await req.db.query(
       `
       SELECT 
         m.user_id,
@@ -215,13 +208,13 @@ export default async function messagesRoutes(fastify) {
 
   // ===================== LISTAGEM =====================
 
-  // GET /api/v1/messages/:user_id  (DEIXE POR ÚLTIMO)
-  fastify.get('/:user_id', async (req, reply) => {
+  // GET /api/v1/messages/:user_id
+  fastify.get('/:user_id', async (req) => {
     const userId = decode(req.params.user_id);
-    const { rows } = await dbPool.query(
+    const { rows } = await req.db.query(
       `SELECT * FROM messages
         WHERE user_id = $1
-        ORDER BY timestamp ASC;`,
+        ORDER BY "timestamp" ASC;`,
       [userId]
     );
     return rows;
