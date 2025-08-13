@@ -1,5 +1,3 @@
-import { dbPool } from '../services/db.js';
-
 export default async function flowRoutes(fastify, opts) {
 fastify.post('/publish', async (req, reply) => {
   const { data } = req.body;
@@ -8,7 +6,7 @@ fastify.post('/publish', async (req, reply) => {
     return reply.code(400).send({ error: 'Fluxo inválido ou ausente.' });
   }
 
-  const client = await dbPool.connect();
+  const client = await req.db.connect();
   try {
     await client.query('BEGIN');
 
@@ -40,7 +38,7 @@ fastify.post('/publish', async (req, reply) => {
     const { user_id } = req.params;
     
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         'SELECT * FROM sessions WHERE user_id = $1 LIMIT 1',
         [user_id]
       );
@@ -61,7 +59,7 @@ fastify.post('/publish', async (req, reply) => {
     const { current_block, flow_id, vars } = req.body;
 
     try {
-      await dbPool.query(`
+      await req.db.query(`
         INSERT INTO sessions(user_id, current_block, last_flow_id, vars, updated_at)
         VALUES($1, $2, $3, $4, $5)
         ON CONFLICT (user_id) 
@@ -82,7 +80,7 @@ fastify.post('/publish', async (req, reply) => {
 fastify.post('/activate', async (req, reply) => {
   const { id } = req.body;
 
-  const client = await dbPool.connect();
+  const client = await req.db.connect();
   try {
     await client.query('BEGIN');
 
@@ -106,7 +104,7 @@ fastify.post('/activate', async (req, reply) => {
 
   fastify.get('/latest', async (req, reply) => {
     try {
-      const { rows } = await dbPool.query(`
+      const { rows } = await req.db.query(`
       SELECT id, active, created_at 
       FROM flows 
       WHERE active = true 
@@ -124,7 +122,7 @@ fastify.post('/activate', async (req, reply) => {
 
   fastify.get('/history', async (req, reply) => {
   try {
-    const { rows } = await dbPool.query(`
+    const { rows } = await req.db.query(`
       SELECT id, active, created_at 
       FROM flows 
       ORDER BY created_at DESC 
@@ -146,7 +144,7 @@ fastify.post('/activate', async (req, reply) => {
     const { id } = req.params;
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         'SELECT data FROM flows WHERE id = $1',
         [id]
       );
