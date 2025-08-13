@@ -1,4 +1,3 @@
-import { dbPool } from '../services/db.js';
 
 async function quickReplyRoutes(fastify, options) {
   // ➕ Criar nova resposta rápida
@@ -9,7 +8,7 @@ async function quickReplyRoutes(fastify, options) {
     }
 
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         'INSERT INTO quick_replies (title, content) VALUES ($1, $2) RETURNING *',
         [title, content]
       );
@@ -23,7 +22,7 @@ async function quickReplyRoutes(fastify, options) {
   // 📄 Listar todas as respostas rápidas
   fastify.get('/', async (_, reply) => {
     try {
-      const { rows } = await dbPool.query(
+      const { rows } = await req.db.query(
         'SELECT id, title, content FROM quick_replies ORDER BY title'
       );
       return reply.send(rows);
@@ -37,7 +36,7 @@ async function quickReplyRoutes(fastify, options) {
   fastify.delete('/:id', async (req, reply) => {
     const { id } = req.params;
     try {
-      const { rowCount } = await dbPool.query('DELETE FROM quick_replies WHERE id = $1', [id]);
+      const { rowCount } = await req.db.query('DELETE FROM quick_replies WHERE id = $1', [id]);
       if (rowCount === 0) return reply.code(404).send({ error: 'Resposta não encontrada' });
       return reply.send({ success: true });
     } catch (err) {
