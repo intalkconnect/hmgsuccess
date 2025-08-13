@@ -1,6 +1,6 @@
 // services/high/processEvent.js
 import crypto from 'crypto';
-import { dbPool } from '../db.js'; // já inicializado no worker via initDB()
+import { dbPool } from '../../engine/services/db.js'; // já inicializado no worker via initDB()
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
 import { emitToRoom } from '../realtime/emitToRoom.js';
