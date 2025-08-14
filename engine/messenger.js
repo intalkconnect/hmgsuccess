@@ -1,51 +1,52 @@
-// engine/messenger.js
-import { sendWebchatMessage } from '../services/sendWebchatMessage.js';
-import { sendWhatsappMessage } from '../services/sendWhatsappMessage.js';
-import { sendTelegramMessage } from '../services/sendTelegramMessage.js';
+// engine/messenger.js (versão resumida)
+import { v4 as uuidv4 } from 'uuid';
+import { dbPool } from './services/db.js';
 import { MessageAdapter } from './messageAdapters.js';
 import { CHANNELS } from './messageTypes.js';
+import { enqueueOutgoing } from './queue.js';
 
 function normalizeRecipientForChannel(channel, to) {
-  if (channel === CHANNELS.WHATSAPP) {
-    return String(to).replace(/@w\.msgcli\.net$/i, '').replace(/\D/g, '');
-  }
+  if (channel === CHANNELS.WHATSAPP) return String(to).replace(/\D/g, '');
   return to;
 }
 
 export async function sendMessageByChannel(channel, to, type, content, context) {
   const toNormalized = normalizeRecipientForChannel(channel, to);
+  const userId =
+    channel === CHANNELS.WHATSAPP ? `${toNormalized}@w.msgcli.net`
+  : channel === CHANNELS.TELEGRAM ? `${toNormalized}@t.msgcli.net`
+  : toNormalized;
 
-  const unifiedMessage = { type, content, metadata: { context } };
+  // adapta conteúdo para o canal de destino
+  const adapted =
+    channel === CHANNELS.WHATSAPP ? MessageAdapter.toWhatsapp({ type, content }) :
+    channel === CHANNELS.TELEGRAM ? MessageAdapter.toTelegram({ type, content }) :
+    content;
 
-  try {
-    switch (channel) {
-      case CHANNELS.WEBCHAT:
-        return sendWebchatMessage({ to: toNormalized, content: unifiedMessage });
+  const tempId = uuidv4();
+  const dbContent = type === 'text' ? adapted.body : JSON.stringify(adapted);
 
-      case CHANNELS.WHATSAPP: {
-        const whatsappContent = MessageAdapter.toWhatsapp(unifiedMessage);
-        return sendWhatsappMessage({
-          to: toNormalized,
-          type,
-          content: whatsappContent,
-          context,
-        });
-      }
+  // grava como PENDING
+  const { rows } = await dbPool.query(`
+    INSERT INTO messages (
+      user_id, message_id, direction, type, content, timestamp,
+      status, metadata, created_at, updated_at, channel
+    ) VALUES ($1,$2,'outgoing',$3,$4,NOW(),
+             'pending',NULL,NOW(),NOW(),$5)
+    RETURNING *
+  `, [userId, tempId, type, dbContent, channel]);
+  const pending = rows[0];
 
-      case CHANNELS.TELEGRAM: {
-        const telegramContent = MessageAdapter.toTelegram(unifiedMessage);
-        return sendTelegramMessage({
-          chatId: toNormalized,
-          type,
-          content: telegramContent,
-        });
-      }
+  // publica para o worker-outgoing
+  await enqueueOutgoing({
+    tempId,
+    channel,
+    to: toNormalized,
+    userId,
+    type,
+    content: adapted,
+    context,
+  });
 
-      default:
-        throw new Error(`Canal não suportado: ${channel}`);
-    }
-  } catch (error) {
-    console.error(`Erro ao enviar mensagem via ${channel}:`, error);
-    throw error;
-  }
+  return pending; // o chamador pode emitir para o front
 }
