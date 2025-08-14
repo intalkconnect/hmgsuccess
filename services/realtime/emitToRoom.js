@@ -16,8 +16,8 @@ export async function emitToRoom({ room, event, payload } = {}) {
     return;
   }
 
-  if (!room)   room  = payload?.user_id;
-  if (!event)  event = payload?.status ? 'update_message' : 'new_message';
+  if (!room)  room  = payload?.user_id;
+  if (!event) event = payload?.status ? 'update_message' : 'new_message';
 
   if (!room || !event) {
     console.warn('[emitToRoom] faltando:', { room, event });
@@ -32,6 +32,6 @@ export async function emitToRoom({ room, event, payload } = {}) {
   }
 }
 
-// açúcares
+// "açúcares" convenientes
 export const emitNewMessage    = (msg) => emitToRoom({ payload: { ...msg }, event: 'new_message' });
 export const emitUpdateMessage = (msg) => emitToRoom({ payload: { ...msg }, event: 'update_message' });
