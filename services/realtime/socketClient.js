@@ -23,7 +23,6 @@ export function getIO() {
     reconnectionDelay: 500,
     reconnectionDelayMax: 5000,
     timeout: 10000,
-    auth: authToken ? { token: authToken } : undefined,
     extraHeaders: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
   });
 
