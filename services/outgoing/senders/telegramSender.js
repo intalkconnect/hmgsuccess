@@ -99,7 +99,19 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       [platformId, tempId]
     );
 
-    // getIO()?.to(`chat-${userId}`).emit('update_message', {...});
+ await emitRealtime({
+   room: userId,                  // EXATAMENTE o mesmo valor que o front usa como room (ex: "888546170@t.msgcli.net")
+   event: 'update_message',
+   payload: {
+     id: platformId || tempId,
+     user_id: userId,             // o ChatWindow só processa se msg.user_id === userId selecionado
+     direction: 'outgoing',
+     status: 'sent',
+     content: { text: content?.body || '' },
+     timestamp: new Date().toISOString(),
+     channel: 'telegram'
+   }
+ });
 
     return { ok: true, platformId };
   } catch (e) {
