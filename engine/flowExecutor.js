@@ -1,233 +1,279 @@
 // engine/flowExecutor.js
 
-import { substituteVariables } from '../utils/vars.js';
 import axios from 'axios';
 import vm from 'vm';
+
+import { substituteVariables } from '../utils/vars.js';
 import { evaluateConditions, determineNextBlock } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel } from './messenger.js';
-import { logOutgoingMessage, logOutgoingFallback } from './messageLogger.js';
 import { distribuirTicket } from './ticketManager.js';
+import { CHANNELS } from './messageTypes.js';
 
-
+/**
+ * Executa um fluxo JSON de atendimento. Sempre envia mensagens via fila (worker-outgoing).
+ * - Se a sessão estiver em humano: não automatiza; apenas garante distribuição do ticket.
+ * - Se o bloco atual for "human": salva estado, distribui e interrompe o fluxo.
+ * - Para blocos que aguardam resposta (awaitResponse): interrompe o loop até próxima mensagem do usuário.
+ */
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
+  // userId interno (padrão WhatsApp). O messenger normaliza "to" por canal.
   const userId = `${rawUserId}@w.msgcli.net`;
 
-  // Se não houver fluxo válido, retorna mensagem de erro
+  // 0) Sanidade do fluxo
   if (!flow || !flow.blocks || !flow.start) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
-  // 1) Carrega (ou inicializa) a sessão do usuário
+  // 1) Carrega (ou inicializa) sessão e vars
   const session = await loadSession(userId);
-  let sessionVars = { ...vars, ...(session.vars || {}) };
+  let sessionVars = { ...(vars || {}), ...(session?.vars || {}) };
+
+  // canal default
+  if (!sessionVars.channel) sessionVars.channel = CHANNELS.WHATSAPP;
+
   let currentBlockId = null;
 
-  // 2) Se já estiver em atendimento humano, salva e interrompe
-if (session.current_block === 'human') {
+  // 2) Se já estiver em atendimento humano, apenas garante distribuição e sai
+  if (session?.current_block === 'human') {
+    // Caso a fila já tenha sido definida anteriormente
+    try {
+      await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
+    } catch (e) {
+      console.error('[flowExecutor] Falha ao distribuir ticket (sessão humana):', e);
+    }
+    return null;
+  }
 
-}
-
-  // 3) Determina qual bloco exibir agora (retoma sessão ou vai para start)
-  if (session.current_block && flow.blocks[session.current_block]) {
+  // 3) Determina bloco inicial (retomada ou start)
+  if (session?.current_block && flow.blocks[session.current_block]) {
     const storedBlock = session.current_block;
 
-    // Se o bloco anterior foi “despedida”, reinicia o fluxo
+    // Se o último bloco foi uma "despedida", reinicia do start
     if (storedBlock === 'despedida') {
       currentBlockId = flow.start;
-      sessionVars = {};
+      sessionVars = { ...sessionVars };
       sessionVars.lastUserMessage = message;
     } else {
       const awaiting = flow.blocks[storedBlock];
+
       if (awaiting.actions && awaiting.actions.length > 0) {
-        if (!message) return null;
+        // Esse bloco estava aguardando resposta do usuário
+        if (!message) return null; // ainda aguardando
         sessionVars.lastUserMessage = message;
 
-        // Avalia as condições de saída do bloco anterior
+        let next = null;
         for (const action of awaiting.actions || []) {
           if (evaluateConditions(action.conditions, sessionVars)) {
-            currentBlockId = action.next;
+            next = action.next;
             break;
           }
         }
-        // Se não encontrou nenhuma ação válida, tenta defaultNext
-        if (!currentBlockId && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-          currentBlockId = awaiting.defaultNext;
+        if (!next && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
+          next = awaiting.defaultNext;
         }
-        // Se ainda indefinido, cai em onerror
-        if (!currentBlockId && flow.blocks.onerror) {
-          currentBlockId = 'onerror';
-        }
+        if (!next && flow.blocks.onerror) next = 'onerror';
+
+        currentBlockId = next || storedBlock; // fallback de segurança
       } else {
-        // Se o bloco anterior não aguardava resposta, permanece nele
+        // O bloco anterior não aguardava resposta; continua dele
         currentBlockId = storedBlock;
       }
     }
   } else {
-    // Sem sessão existente: inicia no bloco “start”
+    // Sem sessão existente: inicia no "start"
     currentBlockId = flow.start;
     sessionVars.lastUserMessage = message;
   }
 
   let lastResponse = null;
 
-  // 4) Loop principal: para enquanto houver bloco a ser processado
+  // 4) Loop principal do fluxo
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // 4.1) Se o tipo for “human”, salva e retorna (não envia mensagem de bot)
+    // 4.1) Se o bloco for "human": salva estado, distribui ticket e interrompe
     if (block.type === 'human') {
-// Captura e salva a fila vinda do bloco (se existir)
-if (block.content?.queueName) {
-  sessionVars.fila = block.content.queueName;
-  console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
-}
+      // Captura queueName do bloco (se houver)
+      if (block.content?.queueName) {
+        sessionVars.fila = block.content.queueName;
+        console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
+      }
 
-await saveSession(userId, currentBlockId, flow.id, sessionVars);
-await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
-return;
+      // Persiste sessão como HUMANO
+      await saveSession(userId, 'human', flow.id, sessionVars);
 
-}
+      // Distribui para atendimento humano
+      try {
+        await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
+      } catch (e) {
+        console.error('[flowExecutor] Falha ao distribuir ticket (bloco human):', e);
+      }
 
+      return null; // interrompe automação aqui
+    }
 
-    // 4.2) Prepara o conteúdo do bloco (texto ou JSON)
+    // 4.2) Prepara conteúdo do bloco (com substituição de variáveis)
     let content = '';
     if (block.content != null) {
-      content = typeof block.content === 'string'
-        ? substituteVariables(block.content, sessionVars)
-        : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
-    }
-
-    // 4.3) Caso seja API call ou script, executa e define “content”
-    if (block.type === 'api_call') {
-      const url = substituteVariables(block.url, sessionVars);
-      const payload = JSON.parse(substituteVariables(JSON.stringify(block.body || {}), sessionVars));
-      const res = await axios({ method: block.method || 'GET', url, data: payload });
-      sessionVars.responseStatus = res.status;
-      sessionVars.responseData = res.data;
-
-      if (block.script) {
-        const sandbox = { response: res.data, vars: sessionVars, output: '' };
-        vm.createContext(sandbox);
-        vm.runInContext(block.script, sandbox);
-        content = sandbox.output;
-      } else {
-        content = JSON.stringify(res.data);
-      }
-      if (block.outputVar) sessionVars[block.outputVar] = content;
-      if (block.statusVar) sessionVars[block.statusVar] = res.status;
-
-    } else if (block.type === 'script') {
-      const sandbox = { vars: sessionVars, output: '' };
-      const code = `${block.code}\noutput = ${block.function};`;
-      vm.createContext(sandbox);
-      vm.runInContext(code, sandbox);
-      content = sandbox.output?.toString() || '';
-      if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
-    }
-
-    // 4.4) Se existir conteúdo e for tipo válidos, envia ao usuário e registra “outgoing”
-    if (
-      content &&
-      ['text','image','audio','video','file','document','location','interactive'].includes(block.type)
-    ) {
-
-      // Delay customizado (antes do send)
-      if (block.sendDelayInSeconds) {
-        await new Promise(r => setTimeout(r, block.sendDelayInSeconds * 1000));
-      }
-
-      // Tenta enviar e registrar
       try {
-        // 4.4.1) Envia a mensagem ao usuário
-const messageContent = typeof content === 'string' 
-  ? { text: content } 
-  : content;
+        content = typeof block.content === 'string'
+          ? substituteVariables(block.content, sessionVars)
+          : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
+      } catch (e) {
+        console.error('[flowExecutor] Erro ao montar conteúdo do bloco:', e);
+        content = '';
+      }
+    }
 
-await sendMessageByChannel(
-  sessionVars.channel || CHANNELS.WHATSAPP,
-  userId,
-  block.type,
-  messageContent
-);
+    // 4.3) Execução de API/SCRIPT que alimentam o conteúdo e variáveis
+    try {
+      if (block.type === 'api_call') {
+        const url = substituteVariables(block.url, sessionVars);
+        const payload = block.body
+          ? JSON.parse(substituteVariables(JSON.stringify(block.body), sessionVars))
+          : undefined;
 
-        // 4.4.2) Registra no banco como “outgoing”
-        console.log('[flowExecutor] Gravando outgoing:', {
-          userId,
-          type: block.type,
-          content,
-          flowId: flow.id
+        const res = await axios({
+          method: (block.method || 'GET').toUpperCase(),
+          url,
+          data: payload
         });
-        const savedOutgoing = await logOutgoingMessage(userId, block.type, content, flow.id);
-        lastResponse = savedOutgoing;
 
-        // ✅ Emite via WebSocket
-        if (savedOutgoing && io) {
-          console.log('[flowExecutor] Emitindo new_message (outgoing):', savedOutgoing);
-          io.emit('new_message', savedOutgoing);
-          io.to(`chat-${userId}`).emit('new_message', savedOutgoing);
+        sessionVars.responseStatus = res.status;
+        sessionVars.responseData = res.data;
+
+        if (block.script) {
+          const sandbox = { response: res.data, vars: sessionVars, output: '' };
+          vm.createContext(sandbox);
+          vm.runInContext(block.script, sandbox);
+          content = sandbox.output;
+        } else {
+          content = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
         }
 
-      } catch (mediaErr) {
-        console.error('❌ Falha ao enviar mídia:', mediaErr);
-        const fallback = (typeof content === 'object' && content.url)
-          ? `Aqui está seu conteúdo: ${content.url}`
-          : `Aqui está sua mensagem: ${content}`;
+        if (block.outputVar) sessionVars[block.outputVar] = content;
+        if (block.statusVar) sessionVars[block.statusVar] = res.status;
 
-        // 4.4.3) Envia fallback de texto simples
-        await sendMessageByChannel(
-          sessionVars.channel || 'whatsapp',
+      } else if (block.type === 'script') {
+        const sandbox = { vars: sessionVars, output: '', console };
+        const code = `
+          ${block.code}
+          try { output = ${block.function}; } catch (e) { output = ''; }
+        `;
+        vm.createContext(sandbox);
+        vm.runInContext(code, sandbox);
+        content = sandbox.output?.toString?.() ?? String(sandbox.output ?? '');
+
+        if (block.outputVar) sessionVars[block.outputVar] = sandbox.output;
+      }
+    } catch (e) {
+      console.error('[flowExecutor] Erro executando api_call/script:', e);
+      // mantém content vazio; next resolverá para onerror se configurado
+    }
+
+    // 4.4) Envio de mensagem (passa sempre pelo worker-outgoing)
+    const sendableTypes = [
+      'text', 'image', 'audio', 'video', 'file', 'document', 'location', 'interactive'
+    ];
+
+    if (content && sendableTypes.includes(block.type)) {
+      // Delay antes do envio, se configurado
+      if (block.sendDelayInSeconds) {
+        const ms = Number(block.sendDelayInSeconds) * 1000;
+        if (!Number.isNaN(ms) && ms > 0) {
+          await new Promise(r => setTimeout(r, ms));
+        }
+      }
+
+      try {
+        // Normaliza payload para texto simples quando vier string
+        const messageContent = (typeof content === 'string')
+          ? { text: content }
+          : content;
+
+        // Enfileira via messenger (que persiste "pending" e retorna o registro)
+        const pendingRecord = await sendMessageByChannel(
+          sessionVars.channel || CHANNELS.WHATSAPP,
           userId,
-          'text',
-          fallback
+          block.type,
+          messageContent
         );
 
-        // 4.4.4) Registra fallback como “outgoing”
-        console.log('[flowExecutor] Gravando fallback outgoing:', {
-          userId,
-          content: fallback,
-          flowId: flow.id
-        });
-        await logOutgoingFallback(userId, fallback, flow.id);
+        lastResponse = pendingRecord;
+
+        // Emite para o front (socket global e sala do chat)
+        if (io && pendingRecord) {
+          try { io.emit('new_message', pendingRecord); } catch {}
+          try { io.to(`chat-${userId}`).emit('new_message', pendingRecord); } catch {}
+        }
+      } catch (mediaErr) {
+        console.error('❌ Falha ao enviar mídia (será enviado fallback):', mediaErr);
+
+        // Fallback simples de texto com URL ou conteúdo
+        const fallback =
+          (typeof content === 'object' && content?.url)
+            ? `Aqui está seu conteúdo: ${content.url}`
+            : (typeof content === 'string'
+                ? content
+                : 'Não foi possível enviar o conteúdo solicitado.');
+
+        try {
+          const pendingFallback = await sendMessageByChannel(
+            sessionVars.channel || CHANNELS.WHATSAPP,
+            userId,
+            'text',
+            { text: fallback }
+          );
+
+          lastResponse = pendingFallback;
+
+          if (io && pendingFallback) {
+            try { io.emit('new_message', pendingFallback); } catch {}
+            try { io.to(`chat-${userId}`).emit('new_message', pendingFallback); } catch {}
+          }
+        } catch (fallbackErr) {
+          console.error('❌ Falha ao enviar fallback de texto:', fallbackErr);
+        }
       }
     }
 
-    // 4.5) Determina o bloco seguinte (lembra de {previousBlock} e onerror)
+    // 4.5) Decide próximo bloco
     let nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
     let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
 
-    // Se houver placeholder “{previousBlock}”, substitui
+    // Substitui placeholders (ex: {previousBlock})
     if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
       resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
     }
-    // Se não existir no fluxo, cai em “onerror”
+
+    // Se não existir no fluxo, vai para onerror (se houver)
     if (!flow.blocks[resolvedBlock]) {
-      resolvedBlock = 'onerror';
+      resolvedBlock = flow.blocks.onerror ? 'onerror' : null;
     }
 
-    // 4.6) Atualiza previousBlock (para evitar loop infinito)
+    // 4.6) Atualiza previousBlock (anti-loop simples)
     if (
       currentBlockId !== 'onerror' &&
-      resolvedBlock !== 'onerror' &&
-      (!sessionVars.previousBlock || sessionVars.previousBlock !== resolvedBlock)
+      resolvedBlock &&
+      resolvedBlock !== 'onerror'
     ) {
       sessionVars.previousBlock = currentBlockId;
     }
 
-    // 4.7) Persiste a sessão com o bloco resolvido
+    // 4.7) Persiste sessão com o bloco resolvido
     await saveSession(userId, resolvedBlock, flow.id, sessionVars);
 
-    // 4.8) Se o bloco aguarda resposta, interrompe o loop (espera próximo input)
+    // 4.8) Se o bloco aguarda resposta do usuário, interrompe o loop
     if (block.awaitResponse) break;
 
-    // 4.9) Delay de saída, se configurado pelo bloco
-    // Verificar explicitamente se awaitTimeInSeconds é um número > 0
+    // 4.9) Delay pós-bloco, se configurado
     if (
-      block.awaitTimeInSeconds != null &&             // existe e não é undefined nem null
-      block.awaitTimeInSeconds !== false &&            // não é false
-      !isNaN(Number(block.awaitTimeInSeconds)) &&      // pode ser convertido em número
-      Number(block.awaitTimeInSeconds) > 0             // e é maior que zero
+      block.awaitTimeInSeconds != null &&
+      block.awaitTimeInSeconds !== false &&
+      !isNaN(Number(block.awaitTimeInSeconds)) &&
+      Number(block.awaitTimeInSeconds) > 0
     ) {
       await new Promise(r => setTimeout(r, Number(block.awaitTimeInSeconds) * 1000));
     }
