@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { initDB, dbPool } from '../../../engine/services/db.js';         // se preferir, o initDB pode ser feito na app principal e removido daqui
-import { getIO } from '../../realtime/socketClient.js';
+import { initDB, dbPool } from '../../../engine/services/db.js';
+import { emitRealtime } from '../../realtime/emitter.js';
 
 const API_VERSION     = process.env.API_VERSION || 'v22.0';
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -79,7 +79,19 @@ export async function sendViaWhatsApp({ tempId, to, type, content, context, user
     );
 
     // emita em tempo real se quiser
-    // getIO()?.to(`chat-${userId}`).emit('update_message', {...});
+ await emitRealtime({
+   room: userId,                  // EXATAMENTE o mesmo valor que o front usa como room (ex: "888546170@t.msgcli.net")
+   event: 'update_message',
+   payload: {
+     id: platformId || tempId,
+     user_id: userId,             // o ChatWindow só processa se msg.user_id === userId selecionado
+     direction: 'outgoing',
+     status: 'sent',
+     content: { text: content?.body || '' },
+     timestamp: new Date().toISOString(),
+     channel: 'whatsapp'
+   }
+ });
 
     return { ok: true, platformId };
   } catch (e) {
