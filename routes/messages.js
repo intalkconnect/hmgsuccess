@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const AMQP_URL = process.env.AMQP_URL || 'amqp://guest:guest@rabbitmq:5672/';
-const OUTGOING_QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outcoming';
+const OUTGOING_QUEUE = process.env.OUTGOING_QUEUE || 'hmg.outgoing';
 
 let amqpConn, amqpCh;
 async function ensureAMQP() {
@@ -220,3 +220,4 @@ export default async function messagesRoutes(fastify) {
     return rows;
   });
 }
+
