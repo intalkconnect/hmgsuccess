@@ -49,3 +49,14 @@ export async function emitQueueCount(fila, count) {
     payload: { fila, count },
   });
 }
+
+// 🔔 Atualização de status de mensagem (usado pelos senders)
+export async function emitUpdateMessage(payload = {}) {
+  const userId = payload?.user_id;
+  if (!userId) {
+    console.warn('[emitUpdateMessage] payload sem user_id');
+    return;
+  }
+  // front ouve 'update_message' no room = user_id
+  return emitToRoom({ room: String(userId), event: 'update_message', payload });
+}
