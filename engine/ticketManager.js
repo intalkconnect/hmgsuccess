@@ -1,6 +1,7 @@
-// engine/ticketManager.js (ou onde está seu distribuirTicket)
+// engine/ticketManager.js
 import { dbPool } from './services/db.js';
 import { v4 as uuidv4 } from 'uuid';
+import { emitQueuePush, emitQueueCount } from '../services/realtime/emitToRoom.js';
 
 // 🔧 Helper: monta o user_id persistido por canal
 function buildStorageUserId(rawUserId, channel) {
@@ -18,14 +19,15 @@ function buildStorageUserId(rawUserId, channel) {
     case 'web':
       return `${rawUserId}@web`;
     default:
-      // fallback: mantém cru (ou defina um sufixo padrão do seu sistema)
       return String(rawUserId);
   }
 }
 
 /**
  * Distribui ticket e insere mensagem de sistema "Ticket #123".
- * ATENÇÃO: agora recebe rawUserId + channel para compor o user_id correto.
+ * RECEBE: rawUserId + channel para compor o user_id correto.
+ * EMITE: quando modo 'manual' (ou auto sem agente) cria ticket SEM assigned_to,
+ *        emite 'queue_push' para o room 'queue:<fila>' e um 'queue_count' de sincronização.
  */
 export async function distribuirTicket(rawUserId, queueName, channel) {
   const client = await dbPool.connect();
@@ -36,7 +38,7 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
 
     async function inserirMensagemSistema(ticketNumber) {
       const systemMessage = `Ticket #${ticketNumber}`;
-      const systemMessageId = uuidv4(); // genérico (não "whatsappMessageId")
+      const systemMessageId = uuidv4();
 
       await client.query(
         `
@@ -55,7 +57,7 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       );
     }
 
-    // 🔍 Verificar se já existe um ticket aberto (usa SEMPRE storageUserId)
+    // 0) Se já existe aberto, não cria outro
     const ticketAbertoQuery = await client.query(
       'SELECT * FROM tickets WHERE user_id = $1 AND status = $2 LIMIT 1',
       [storageUserId, 'open']
@@ -66,14 +68,14 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       return { ticketExists: true, ticketId: ticketAberto.id, userId: storageUserId };
     }
 
-    // 1. Buscar configuração
+    // 1) Configuração de distribuição
     const configQuery = await client.query(
       'SELECT value FROM settings WHERE key = $1 LIMIT 1',
       ['distribuicao_tickets']
     );
     const modoDistribuicao = configQuery.rows[0]?.value || 'manual';
 
-    // 2. Determinar fila do cliente
+    // 2) Determinar fila
     let filaCliente = queueName;
     if (!filaCliente) {
       const filaResult = await client.query(
@@ -83,18 +85,41 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       filaCliente = filaResult.rows[0]?.fila || 'Default';
     }
 
+    // ——— MODO MANUAL: cria SEM assigned_to (entra na FILA) ———
     if (modoDistribuicao === 'manual') {
-      console.log('[📥 Manual] Criando ticket aguardando agente.');
-
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
-        [storageUserId, filaCliente, null]
+        [storageUserId, filaCliente, null] // <= sem atendente
       );
 
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
       await inserirMensagemSistema(ticketNumber);
 
+      // Aplica as mudanças no banco ANTES de emitir
       await client.query('COMMIT');
+
+      // 🔔 Emite queue_push para atualizar contador imediatamente
+      await emitQueuePush(filaCliente, {
+        user_id: storageUserId,
+        ticket_number: ticketNumber,
+        assigned_to: null,
+        mode: 'manual',
+      });
+
+      // 🔁 (opcional) emite um queue_count para sincronizar estado
+      try {
+        const { rows } = await dbPool.query(
+          `SELECT COUNT(*)::int AS c
+             FROM tickets
+            WHERE status = 'open' AND assigned_to IS NULL AND fila = $1`,
+          [filaCliente]
+        );
+        const count = rows?.[0]?.c ?? 0;
+        await emitQueueCount(filaCliente, count);
+      } catch (e) {
+        console.warn('[ticketManager] falha ao emitir queue_count:', e?.message);
+      }
+
       return {
         mode: 'manual',
         ticketNumber,
@@ -103,7 +128,7 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       };
     }
 
-    // 3. Buscar atendentes online da fila
+    // ——— MODO AUTOMÁTICO: tenta achar atendente ———
     const atendentesQuery = await client.query(
       'SELECT email, filas FROM atendentes WHERE status = $1',
       ['online']
@@ -112,18 +137,37 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       a => Array.isArray(a.filas) && a.filas.includes(filaCliente)
     );
 
+    // Nenhum atendente: cria SEM assigned_to (entra na FILA) e emite push
     if (!candidatos.length) {
-      console.warn(`⚠️ Nenhum atendente online para a fila: "${filaCliente}". Criando ticket sem atendente.`);
-
       const createTicketQuery = await client.query(
         `SELECT create_ticket($1, $2, $3) as ticket_number`,
         [storageUserId, filaCliente, null]
       );
-
       const ticketNumber = createTicketQuery.rows[0].ticket_number;
-      console.log(`[✅ Criado] Ticket SEM atendente para fila "${filaCliente}", número: ${ticketNumber}`);
 
       await client.query('COMMIT');
+
+      await emitQueuePush(filaCliente, {
+        user_id: storageUserId,
+        ticket_number: ticketNumber,
+        assigned_to: null,
+        mode: 'auto-no-agent',
+      });
+
+      // sincroniza contagem
+      try {
+        const { rows } = await dbPool.query(
+          `SELECT COUNT(*)::int AS c
+             FROM tickets
+            WHERE status = 'open' AND assigned_to IS NULL AND fila = $1`,
+          [filaCliente]
+        );
+        const count = rows?.[0]?.c ?? 0;
+        await emitQueueCount(filaCliente, count);
+      } catch (e) {
+        console.warn('[ticketManager] falha ao emitir queue_count:', e?.message);
+      }
+
       return {
         success: true,
         ticketNumber,
@@ -133,7 +177,7 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       };
     }
 
-    // 4. Contagem de tickets por atendente
+    // Há atendentes: escolhe o de menor carga
     const cargasQuery = await client.query(`
       SELECT assigned_to, COUNT(*) as total_tickets 
       FROM tickets 
@@ -141,11 +185,10 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
       GROUP BY assigned_to
     `);
     const mapaCargas = {};
-    cargasQuery.rows.forEach(linha => {
-      mapaCargas[linha.assigned_to] = parseInt(linha.total_tickets);
+    cargasQuery.rows.forEach(l => {
+      mapaCargas[l.assigned_to] = parseInt(l.total_tickets);
     });
 
-    // 5. Escolher atendente com menor carga
     candidatos.sort((a, b) => {
       const cargaA = mapaCargas[a.email] || 0;
       const cargaB = mapaCargas[b.email] || 0;
@@ -154,22 +197,19 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
 
     const escolhido = candidatos[0]?.email;
     if (!escolhido) {
-      console.warn('⚠️ Não foi possível determinar atendente.');
       await client.query('COMMIT');
       return { success: false, error: 'No agent available', userId: storageUserId };
     }
 
-    // 6. Criar ticket atribuído
+    // Cria já atribuído (não entra na fila => não emite push)
     const createTicketQuery = await client.query(
       `SELECT create_ticket($1, $2, $3) as ticket_number`,
       [storageUserId, filaCliente, escolhido]
     );
-
     const ticketNumber = createTicketQuery.rows[0].ticket_number;
-    await inserirMensagemSistema(ticketNumber);
-    console.log(`[✅ Criado] Novo ticket atribuído a ${escolhido}, número: ${ticketNumber}`);
 
     await client.query('COMMIT');
+
     return {
       success: true,
       ticketNumber,
@@ -179,7 +219,7 @@ export async function distribuirTicket(rawUserId, queueName, channel) {
     };
 
   } catch (error) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch {}
     console.error('❌ Erro na distribuição de ticket:', error);
     return { success: false, error: error.message };
   } finally {
