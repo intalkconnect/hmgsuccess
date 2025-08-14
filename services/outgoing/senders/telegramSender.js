@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { initDB, dbPool } from '../../../engine/services/db.js';
-// emite via HTTP /emit do servidor realtime
-import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
+import { emitUpdateMessage } from '../../realtime/emitToRoom.js'; // via HTTP /emit
 
 const TG_TOKEN = process.env.TELEGRAM_TOKEN;
 const TG_BASE  = TG_TOKEN ? `https://api.telegram.org/bot${TG_TOKEN}` : null;
@@ -115,7 +114,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       [platformId, tempId]
     );
 
-    // 🔔 emite atualização em tempo real (room = userId; evento que o front escuta: update_message)
+    // 🔔 emite atualização em tempo real (room = userId; evento: update_message)
     await emitUpdateMessage({
       id: platformId || tempId,
       user_id: userId,                 // TEM que ser igual ao room que o front entrou
