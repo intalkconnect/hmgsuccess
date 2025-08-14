@@ -3,10 +3,7 @@ import crypto from 'crypto';
 import { dbPool } from '../../engine/services/db.js'; // já inicializado no worker via initDB()
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
-import { emitToRoom } from '../realtime/emitToRoom.js';
-
-// (opcional) se tiver no seu projeto:
-// import { markMessageAsRead } from '../wa/markMessageAsRead.js';
+import { emitToRoom } from '../realtime/emitToRoom.js'; // <-- usa helper via HTTP /emit
 
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
@@ -50,7 +47,7 @@ async function getActiveFlow() {
   return rows[0]?.data || null;
 }
 
-// -------- WhatsApp --------
+/* ===================== WhatsApp ===================== */
 async function processWhatsApp(evt, { io } = {}) {
   const value = evt?.payload?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return 'duplicate';
@@ -76,11 +73,9 @@ async function processWhatsApp(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  // try { if (msg.id) await markMessageAsRead(msg.id); } catch {}
-
   // envia para a SALA correta (somente esse cliente vê)
-  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
-  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
+  await emitToRoom({ room: userId, event: 'new_message',    payload: inserted });
+  await emitToRoom({ room: userId, event: 'bot_processing', payload: { user_id: userId, status: 'processing' } });
 
   const flow = await getActiveFlow();
   const outgoing = await runFlow({
@@ -99,12 +94,12 @@ async function processWhatsApp(evt, { io } = {}) {
   });
 
   if (outgoing?.user_id) {
-    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
+    await emitToRoom({ room: userId, event: 'new_message', payload: outgoing });
   }
   return 'ok';
 }
 
-// -------- Telegram --------
+/* ===================== Telegram ===================== */
 async function processTelegram(evt, { io } = {}) {
   const update = evt?.payload;
   if (!update) return 'duplicate';
@@ -133,8 +128,8 @@ async function processTelegram(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  emitToRoom(io, { room: userId, event: 'new_message', data: inserted });
-  emitToRoom(io, { room: userId, event: 'bot_processing', data: { user_id: userId, status: 'processing' } });
+  await emitToRoom({ room: userId, event: 'new_message',    payload: inserted });
+  await emitToRoom({ room: userId, event: 'bot_processing', payload: { user_id: userId, status: 'processing' } });
 
   const flow = await getActiveFlow();
   const outgoing = await runFlow({
@@ -152,12 +147,12 @@ async function processTelegram(evt, { io } = {}) {
   });
 
   if (outgoing?.user_id) {
-    emitToRoom(io, { room: userId, event: 'new_message', data: outgoing });
+    await emitToRoom({ room: userId, event: 'new_message', payload: outgoing });
   }
   return 'ok';
 }
 
-// -------- Router --------
+/* ===================== Router ===================== */
 export async function processEvent(evt, { io } = {}) {
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
