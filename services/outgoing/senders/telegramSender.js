@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { ax } from '../../http/ax.js';
 import { initDB, dbPool } from '../../../engine/services/db.js';
 import { emitUpdateMessage } from '../../realtime/emitToRoom.js'; // via HTTP /emit
 
@@ -20,7 +20,7 @@ function tgFatal(desc = '') {
 }
 
 async function tgCall(method, payload) {
-  const { data } = await axios.post(`${TG_BASE}/${method}`, payload, { timeout: 15000 });
+  const { data } = await ax.post(`${TG_BASE}/${method}`, payload, { timeout: 15000 });
   if (data?.ok) return data;
   const err = new Error(data?.description || `${method} falhou`);
   err._tg = data;
