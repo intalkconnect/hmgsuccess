@@ -33,7 +33,7 @@ FROM tickets t
 JOIN clientes c ON t.user_id = c.user_id
 JOIN filas f ON f.nome = t.fila
 LEFT JOIN LATERAL (
-  SELECT content, timestamp
+  SELECT type, content, timestamp
   FROM messages
   WHERE user_id = t.user_id
   ORDER BY timestamp DESC
