@@ -3,6 +3,7 @@ import FormData from 'form-data';
 import { ax } from '../../http/ax.js';
 import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
 import { spawn } from 'child_process';
+import { initDB, dbPool } from '../../../engine/services/db.js'; // ✅ alinhar com Telegram
 
 // ======================= ENVs =======================
 const {
@@ -227,6 +228,7 @@ async function buildPayload({ to, type, content, context }) {
 // ===================== Sender principal ======================
 export async function sendViaWhatsApp(job) {
   assertEnvs();
+  await initDB(); // ✅ como no Telegram
 
   const toRaw = job.to || job.userId || job.user_id;
   const to = normTo(toRaw);
@@ -261,7 +263,21 @@ export async function sendViaWhatsApp(job) {
 
     const providerId = res?.data?.messages?.[0]?.id || null;
 
-    // Update de sucesso (mesmo formato que você já usa)
+    // ✅ Atualiza o DB como o Telegram faz (resolve "pending" no banco)
+    try {
+      await dbPool.query(
+        `UPDATE messages
+           SET status='sent',
+               message_id=COALESCE($1, message_id),
+               updated_at=NOW()
+         WHERE message_id=$2`,
+        [providerId, job.tempId]
+      );
+    } catch (e) {
+      console.warn('[WABA] Aviso: falha ao atualizar DB para sent:', e?.message);
+    }
+
+    // 🔔 NÂO alterar este emit (mantido exatamente como estava)
     try {
       await emitUpdateMessage({
         user_id: to,
@@ -278,6 +294,21 @@ export async function sendViaWhatsApp(job) {
     const data = err.response?.data;
     console.error(`❌ [WABA] Falha ao enviar (status ${status ?? 'N/A'}):`, data?.error || err.message);
 
+    // ❌ Atualiza DB como erro (alinhado ao Telegram)
+    try {
+      await dbPool.query(
+        `UPDATE messages
+           SET status='error',
+               metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{error}', to_jsonb($1)),
+               updated_at=NOW()
+         WHERE message_id=$2`,
+        [data?.error?.message || err.message || 'send error', job.tempId]
+      );
+    } catch (e) {
+      console.warn('[WABA] Aviso: falha ao atualizar DB para error:', e?.message);
+    }
+
+    // 🔔 NÂO alterar este emit (mantido exatamente como estava)
     try {
       await emitUpdateMessage({
         user_id: to,
