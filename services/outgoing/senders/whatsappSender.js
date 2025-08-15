@@ -1,6 +1,6 @@
 // services/outgoing/senders/whatsappSender.js
-import axios from 'axios';
 import FormData from 'form-data';
+import { ax } from '../../http/ax.js';
 import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
 
 // ======================= ENVs =======================
@@ -9,7 +9,7 @@ const {
   PHONE_NUMBER_ID,
   WHATSAPP_TOKEN: ACCESS_TOKEN,
   // se "true", tentamos subir a mídia e enviar por {id}; se "false", enviaremos por {link}
-  WABA_UPLOAD_MEDIA = 'true',
+  WABA_UPLOAD_MEDIA = 'false',
 } = process.env;
 
 // ==================== Guard rails ===================
@@ -38,14 +38,14 @@ function isE164(num) {
 // ================= Upload de mídia (opcional) =================
 async function uploadMediaFromUrl(url, type) {
   // baixa a mídia e envia como multipart para o endpoint de upload
-  const download = await axios.get(url, { responseType: 'stream', timeout: 20000 });
+  const download = await ax.get(url, { responseType: 'stream', timeout: 20000 });
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('file', download.data, 'media'); // nome genérico; o content-type vem do stream
   // Observação: a Cloud API não exige "type" aqui; usamos apenas messaging_product+file
 
   const uploadUrl = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/media`;
-  const res = await axios.post(uploadUrl, form, {
+  const res = await ax.post(uploadUrl, form, {
     headers: {
       Authorization: `Bearer ${ACCESS_TOKEN}`,
       ...form.getHeaders(),
@@ -170,7 +170,7 @@ export async function sendViaWhatsApp(job) {
   // Envia para o Graph
   const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
   try {
-    const res = await axios.post(url, payload, {
+    const res = await ax.post(url, payload, {
       headers: {
         Authorization: `Bearer ${ACCESS_TOKEN}`,
         'Content-Type': 'application/json',
