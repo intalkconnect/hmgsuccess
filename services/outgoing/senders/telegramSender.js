@@ -12,7 +12,6 @@ function resolveRoomUserId(userId, to) {
   return `${raw}@t.msgcli.net`;
 }
 
-
 function tgFatal(desc = '') {
   const d = String(desc).toLowerCase();
   return (
@@ -39,13 +38,13 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
   if (!TG_BASE) return { ok: false, retry: false, reason: 'TELEGRAM_TOKEN não configurado' };
   await initDB();
 
-  const roomUserId = resolveRoomUserId(userId, to)
+  const roomUserId = resolveRoomUserId(userId, to);
 
   try {
     let data;
     switch (type) {
       case 'text': {
-        const text = content?.body;
+        const text = content?.body || content?.text;
         if (!text) throw new Error('Telegram: text.body obrigatório');
         data = await tgCall('sendMessage', {
           chat_id: to,
@@ -55,7 +54,8 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
         break;
       }
       case 'image': {
-        const photo = content?.url; if (!photo) throw new Error('Telegram: image.url obrigatório');
+        const photo = content?.url || content?.link;
+        if (!photo) throw new Error('Telegram: image.url obrigatório');
         data = await tgCall('sendPhoto', {
           chat_id: to,
           photo,
@@ -65,7 +65,8 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
         break;
       }
       case 'audio': {
-        const link = content?.url; if (!link) throw new Error('Telegram: audio.url obrigatório');
+        const link = content?.url || content?.link;
+        if (!link) throw new Error('Telegram: audio.url obrigatório');
         const method = content?.voice ? 'sendVoice' : 'sendAudio';
         const field  = content?.voice ? 'voice'     : 'audio';
         data = await tgCall(method, {
@@ -77,7 +78,8 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
         break;
       }
       case 'video': {
-        const link = content?.url; if (!link) throw new Error('Telegram: video.url obrigatório');
+        const link = content?.url || content?.link;
+        if (!link) throw new Error('Telegram: video.url obrigatório');
         data = await tgCall('sendVideo', {
           chat_id: to,
           video: link,
@@ -87,7 +89,8 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
         break;
       }
       case 'document': {
-        const link = content?.url; if (!link) throw new Error('Telegram: document.url obrigatório');
+        const link = content?.url || content?.link;
+        if (!link) throw new Error('Telegram: document.url obrigatório');
         data = await tgCall('sendDocument', {
           chat_id: to,
           document: link,
@@ -115,29 +118,34 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       data?.result?.message_id ||
       (Array.isArray(data?.result) ? data.result[0]?.message_id : null) || null;
 
-    await dbPool.query(
-      `UPDATE messages
-         SET status='sent',
-             message_id=COALESCE($1, message_id),
-             updated_at=NOW()
-       WHERE message_id=$2`,
-      [platformId, tempId]
-    );
+    // DB: marca a mensagem como 'sent' e substitui tempId por platformId (se veio)
+    try {
+      await dbPool.query(
+        `UPDATE messages
+           SET status='sent',
+               message_id=COALESCE($1, message_id),
+               updated_at=NOW()
+         WHERE message_id=$2`,
+        [platformId, tempId]
+      );
+    } catch (dbErr) {
+      console.warn('[telegramSender] warn ao atualizar DB:', dbErr?.message);
+    }
 
-// ✅ Update "safe": inclui chaves que a UI espera e não apaga o card
+    // ✅ Update "safe": não sobrescreve conv.status; usa message_status
     const mid = tempId || platformId || null;
     const safeUpdate = {
-      user_id: roomUserId,         // room certo
+      user_id: roomUserId,       // room certo
       channel: 'telegram',
-      id: mid,                     // muitos reducers usam 'id'
-      message_id: mid,             // também mantém 'message_id'
+      id: mid,                   // muitos reducers usam 'id'
+      message_id: mid,           // mantém message_id p/ consistência
       provider_id: platformId || undefined,
-      status: 'sent',
-      direction: 'outgoing',       // preserva direção
-      type,                        // preserva tipo p/ preview/sort
+      message_status: 'sent',    // 👈 NÃO usar 'status' (evita sumir card)
+      direction: 'outgoing',
+      type,
       timestamp: new Date().toISOString()
     };
-    // só adiciona 'content' quando for realmente útil (evita sobrescrever mídia com vazio)
+    // só adiciona 'content' quando útil (evita sobrescrever mídia com vazio)
     if (type === 'text' && content?.body) {
       safeUpdate.content = { body: content.body };
     } else if ((type === 'image' || type === 'video' || type === 'document') &&
@@ -146,6 +154,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       if (content.filename) safeUpdate.content.filename = content.filename;
       if (content.caption)  safeUpdate.content.caption  = content.caption;
     }
+
     await emitUpdateMessage(safeUpdate);
 
     return { ok: true, platformId };
@@ -157,26 +166,25 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       await dbPool.query(
         `UPDATE messages
            SET status='error',
-               metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{error}', to_jsonb($1)),
-               updated_at=NOW()
+           metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{error}', to_jsonb($1)),
+           updated_at=NOW()
          WHERE message_id=$2`,
         [tg || e?.message, tempId]
       );
     } catch {}
 
-  // ❌ Update de erro: mantém campos-base para não sumir o card na UI
+    // ❌ Update de erro: mantém campos-base e usa message_status
     const errUpdate = {
       user_id: roomUserId,
       channel: 'telegram',
       id: tempId,
       message_id: tempId,
-      status: 'error',
+      message_status: 'error',     // 👈 NÃO usar 'status'
       reason: String(desc || 'send_failed'),
       direction: 'outgoing',
       type,
       timestamp: new Date().toISOString()
     };
-    // mesmo critério p/ 'content' do caso de sucesso (opcional)
     if (type === 'text' && content?.body) {
       errUpdate.content = { body: content.body };
     } else if ((type === 'image' || type === 'video' || type === 'document') &&
@@ -185,6 +193,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       if (content.filename) errUpdate.content.filename = content.filename;
       if (content.caption)  errUpdate.content.caption  = content.caption;
     }
+
     await emitUpdateMessage(errUpdate);
 
     if (tgFatal(desc)) {
