@@ -26,6 +26,7 @@ SELECT
   c.channel,
   c.phone,
   c.atendido,
+  m.type AS type,
   m.content AS content,
   m.timestamp AS timestamp
 FROM tickets t
