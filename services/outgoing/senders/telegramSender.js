@@ -114,15 +114,13 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       [platformId, tempId]
     );
 
-    // 🔔 emite atualização em tempo real (room = userId; evento: update_message)
+    // ✅ Atualização minimalista (alinhada ao WhatsApp): NÃO manda "content", usa "message_id"
     await emitUpdateMessage({
-      id: platformId || tempId,
-      user_id: userId,                 // TEM que ser igual ao room que o front entrou
-      direction: 'outgoing',
-      status: 'sent',
-      content: { text: content?.body || '' },
-      timestamp: new Date().toISOString(),
-      channel: 'telegram'
+      user_id: userId,                 // tem que ser o mesmo room da UI
+      channel: 'telegram',
+      message_id: tempId || platformId, // mantém o provisional id pra UI resolver
+      provider_id: platformId || undefined,
+      status: 'sent'
     });
 
     return { ok: true, platformId };
@@ -141,16 +139,13 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       );
     } catch {}
 
-    // 🔔 emite erro em tempo real
+    // ❌ Atualização de erro (sem "content", com "message_id")
     await emitUpdateMessage({
-      id: tempId,
       user_id: userId,
-      direction: 'outgoing',
+      channel: 'telegram',
+      message_id: tempId,
       status: 'error',
-      content: { text: content?.body || '' },
-      error: String(desc || 'send_failed'),
-      timestamp: new Date().toISOString(),
-      channel: 'telegram'
+      reason: String(desc || 'send_failed')
     });
 
     if (tgFatal(desc)) {
