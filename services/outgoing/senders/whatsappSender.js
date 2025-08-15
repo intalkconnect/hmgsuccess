@@ -1,4 +1,3 @@
-// services/outgoing/senders/whatsappSender.js
 import FormData from 'form-data';
 import { ax } from '../../http/ax.js';
 import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
@@ -9,7 +8,6 @@ const {
   API_VERSION = 'v22.0',
   PHONE_NUMBER_ID,
   WHATSAPP_TOKEN: ACCESS_TOKEN,
-  // se "true", tentamos subir a mídia e enviar por {id}; se "false", enviaremos por {link}
   WABA_UPLOAD_MEDIA = 'false',
 } = process.env;
 
@@ -19,25 +17,19 @@ function assertEnvs() {
   if (!API_VERSION) missing.push('API_VERSION');
   if (!PHONE_NUMBER_ID) missing.push('PHONE_NUMBER_ID');
   if (!ACCESS_TOKEN) missing.push('WHATSAPP_TOKEN');
-  if (missing.length) {
-    throw new Error(`[WABA] Variáveis ausentes: ${missing.join(', ')}`);
-  }
+  if (missing.length) throw new Error(`[WABA] Variáveis ausentes: ${missing.join(', ')}`);
 }
 
 function normalizeWaTo(to) {
   if (!to) return to;
-  // remove sufixo interno tipo "@w.msgcli.net" e mantém só dígitos
   const cleaned = String(to).replace(/@w\.msgcli\.net$/i, '');
   const digits = cleaned.replace(/\D/g, '');
   return digits.replace(/^0+/, '');
 }
-
-function isE164(num) {
-  return /^\d{7,15}$/.test(num); // regra simples: 7–15 dígitos
-}
+function isE164(num) { return /^\d{7,15}$/.test(num); }
 
 // ================= Upload de mídia (opcional) =================
-async function uploadMediaFromUrl(url, type) {
+async function uploadMediaFromUrl(url) {
   const download = await ax.get(url, { responseType: 'stream', timeout: 20000 });
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
@@ -45,15 +37,9 @@ async function uploadMediaFromUrl(url, type) {
 
   const uploadUrl = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/media`;
   const res = await ax.post(uploadUrl, form, {
-    headers: {
-      Authorization: `Bearer ${ACCESS_TOKEN}`,
-      ...form.getHeaders(),
-    },
-    timeout: 20000,
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
+    headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, ...form.getHeaders() },
+    timeout: 20000, maxContentLength: Infinity, maxBodyLength: Infinity,
   });
-
   const mediaId = res?.data?.id;
   if (!mediaId) throw new Error('[WABA] Upload retornou sem id');
   return mediaId;
@@ -61,12 +47,9 @@ async function uploadMediaFromUrl(url, type) {
 
 // ============== Normalização de conteúdo por tipo ==============
 function coerceContent(type, content) {
-  if (typeof content === 'string' && type === 'text') {
-    return { body: content };
-  }
-  const c = { ...(content || {}) };
+  const c = typeof content === 'string' ? { body: content } : { ...(content || {}) };
   if (type === 'text') {
-    if (!c.body && c.text) c.body = c.text;
+    if (!c.body && c.text) c.body = c.text; // sempre { body: "..." }
   }
   if (['image', 'audio', 'video', 'document'].includes(type)) {
     if (!c.url && c.link) c.url = c.link;
@@ -89,18 +72,17 @@ async function buildPayload({ to, type, content, context }) {
     }
     const mediaUrl = content.url;
     if (!mediaUrl) throw new Error(`[WABA] ${type}.url/link é obrigatório`);
-
     const wantUpload = String(WABA_UPLOAD_MEDIA).toLowerCase() === 'true';
     if (wantUpload) {
       try {
-        const mediaId = await uploadMediaFromUrl(mediaUrl, type);
+        const mediaId = await uploadMediaFromUrl(mediaUrl);
         payload[type] = { id: mediaId };
         if (type === 'audio' && content.voice === true) payload[type].voice = true;
         if (content.caption) payload[type].caption = content.caption;
         if (content.filename && type === 'document') payload[type].filename = content.filename;
         return payload;
       } catch (e) {
-        console.warn('[WABA] Upload falhou, caindo para envio por link. Motivo:', e?.message);
+        console.warn('[WABA] Upload falhou, caindo para link:', e?.message);
       }
     }
     payload[type] = { link: mediaUrl };
@@ -124,28 +106,23 @@ async function buildPayload({ to, type, content, context }) {
   return payload;
 }
 
-// helper para montar um update “rico” e não apagar a mensagem no front
+// -------- update rico para não “apagar” a mensagem no front ------
 function buildSafeUpdate({ to, tempId, providerId, type, content, status, reason }) {
   const id = tempId || providerId || null;
   const update = {
-    id,                     // muitos reducers usam 'id'
-    user_id: to,            // usamos 'to' como você pediu
+    id,
+    user_id: to,           // como você pediu (sem @w.msgcli.net)
     channel: 'whatsapp',
     message_id: id,
     provider_id: providerId || undefined,
     status,
     direction: 'outgoing',
     type,
+    timestamp: new Date().toISOString(),
   };
   if (reason) update.reason = reason;
-
-  // incluir 'content' para o front não perder o preview
-  if (type === 'text') {
-    update.content = content?.body ?? content?.text ?? '';
-  } else if (['image', 'video', 'document', 'audio', 'location', 'interactive'].includes(type)) {
-    // passa o objeto que você já mandou originalmente
-    update.content = content || {};
-  }
+  // sempre manda content normalizado no formato do front
+  update.content = coerceContent(type, content);
   return update;
 }
 
@@ -161,7 +138,7 @@ export async function sendViaWhatsApp(job) {
   const context = job.context || undefined;
 
   if (!isE164(to)) {
-    throw new Error(`[WABA] Destinatário inválido: "${toRaw}". Use DDI/DDD apenas dígitos, ex: 5521999998888`);
+    throw new Error(`[WABA] Destinatário inválido: "${toRaw}". Use DDI/DDD com dígitos, ex: 5521999998888`);
   }
 
   const payload = await buildPayload({ to, type, content, context });
@@ -169,16 +146,13 @@ export async function sendViaWhatsApp(job) {
   const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
   try {
     const res = await ax.post(url, payload, {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
       timeout: 15000,
     });
 
     const providerId = res?.data?.messages?.[0]?.id || null;
 
-    // ✅ DB: marca sent e troca tempId -> providerId (se vier)
+    // DB: sent
     try {
       await dbPool.query(
         `UPDATE messages
@@ -189,10 +163,10 @@ export async function sendViaWhatsApp(job) {
         [providerId, job.tempId]
       );
     } catch (dbErr) {
-      console.warn('[whatsappSender] aviso ao atualizar DB (sent):', dbErr?.message);
+      console.warn('[whatsappSender] aviso DB (sent):', dbErr?.message);
     }
 
-    // 🔔 Update “rico” para não quebrar o renderer no front
+    // Update rico
     try {
       await emitUpdateMessage(
         buildSafeUpdate({
@@ -200,7 +174,7 @@ export async function sendViaWhatsApp(job) {
           tempId: job.tempId,
           providerId,
           type,
-          content,
+          content,        // mantém o mesmo conteúdo que a UI conhece
           status: 'sent',
         })
       );
@@ -208,11 +182,9 @@ export async function sendViaWhatsApp(job) {
 
     return { ok: true, providerId, response: res.data };
   } catch (err) {
-    const status = err.response?.status;
     const data = err.response?.data;
-    console.error(`❌ [WABA] Falha ao enviar (status ${status ?? 'N/A'}):`, data?.error || err.message);
 
-    // ❌ DB: marca error e grava metadata
+    // DB: error
     try {
       await dbPool.query(
         `UPDATE messages
@@ -223,10 +195,10 @@ export async function sendViaWhatsApp(job) {
         [data?.error || err.message, job.tempId]
       );
     } catch (dbErr) {
-      console.warn('[whatsappSender] aviso ao atualizar DB (error):', dbErr?.message);
+      console.warn('[whatsappSender] aviso DB (error):', dbErr?.message);
     }
 
-    // 🔔 Update “rico” de erro (mantém type/content para o front não perder o card)
+    // Update rico de erro
     try {
       await emitUpdateMessage(
         buildSafeUpdate({
@@ -241,6 +213,6 @@ export async function sendViaWhatsApp(job) {
       );
     } catch {}
 
-    throw err; // Propaga p/ retry/backoff do worker
+    throw err;
   }
 }
