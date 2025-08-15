@@ -1,129 +1,214 @@
+// services/outgoing/senders/whatsappSender.js
 import axios from 'axios';
-import { initDB, dbPool } from '../../../engine/services/db.js';
-import { emitUpdateMessage } from '../../realtime/emitToRoom.js'; // via HTTP /emit
+import FormData from 'form-data';
+import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
 
-const API_VERSION     = process.env.API_VERSION || 'v22.0';
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const WA_TOKEN        = process.env.WHATSAPP_TOKEN;
+// ======================= ENVs =======================
+const {
+  API_VERSION = 'v22.0',
+  PHONE_NUMBER_ID,
+  WHATSAPP_TOKEN: ACCESS_TOKEN,
+  // se "true", tentamos subir a mídia e enviar por {id}; se "false", enviaremos por {link}
+  WABA_UPLOAD_MEDIA = 'true',
+} = process.env;
 
-function onlyDigits(s){ return String(s||'').replace(/\D/g, ''); }
-
-function buildPayload({ to, type, content, context }) {
-  const base = { messaging_product: 'whatsapp', to: onlyDigits(to), type };
-  if (context?.message_id) base.context = { message_id: context.message_id };
-
-  switch (type) {
-    case 'text': {
-      const body = content?.body;
-      if (!body) throw new Error('text.body é obrigatório');
-      return { ...base, text: { body } };
-    }
-    case 'image': {
-      const url = content?.url; if (!url) throw new Error('image.url é obrigatório');
-      return { ...base, image: { link: url, ...(content?.caption ? { caption: content.caption } : {}) } };
-    }
-    case 'audio': {
-      const url = content?.url; if (!url) throw new Error('audio.url é obrigatório');
-      return { ...base, audio: { link: url, ...(content?.voice ? { voice: true } : {}) } };
-    }
-    case 'video': {
-      const url = content?.url; if (!url) throw new Error('video.url é obrigatório');
-      return { ...base, video: { link: url, ...(content?.caption ? { caption: content.caption } : {}) } };
-    }
-    case 'document': {
-      const url = content?.url; if (!url) throw new Error('document.url é obrigatório');
-      return { ...base, document: { link: url, ...(content?.filename ? { filename: content.filename } : {}) } };
-    }
-    case 'template': {
-      const { templateName, languageCode, components } = content || {};
-      if (!templateName || !languageCode) throw new Error('templateName e languageCode obrigatórios');
-      return {
-        messaging_product: 'whatsapp',
-        to: onlyDigits(to),
-        type: 'template',
-        template: { name: templateName, language: { code: languageCode }, components: components || [] }
-      };
-    }
-    default:
-      throw new Error(`Tipo não suportado no WhatsApp: ${type}`);
+// ==================== Guard rails ===================
+function assertEnvs() {
+  const missing = [];
+  if (!API_VERSION) missing.push('API_VERSION');
+  if (!PHONE_NUMBER_ID) missing.push('PHONE_NUMBER_ID');
+  if (!ACCESS_TOKEN) missing.push('WHATSAPP_TOKEN');
+  if (missing.length) {
+    throw new Error(`[WABA] Variáveis ausentes: ${missing.join(', ')}`);
   }
 }
 
-function isFatalWhatsApp(errData) {
-  const code = errData?.error?.code;
-  const type = errData?.error?.type;
-  return code === 190 || type === 'OAuthException'; // token inválido
+function normalizeWaTo(to) {
+  if (!to) return to;
+  // remove sufixo interno tipo "@w.msgcli.net" e mantém só dígitos
+  const cleaned = String(to).replace(/@w\.msgcli\.net$/i, '');
+  const digits = cleaned.replace(/\D/g, '');
+  return digits.replace(/^0+/, '');
 }
 
-export async function sendViaWhatsApp({ tempId, to, type, content, context, userId }) {
-  if (!WA_TOKEN || !PHONE_NUMBER_ID) {
-    return { ok: false, retry: false, reason: 'WHATSAPP_TOKEN/PHONE_NUMBER_ID faltando' };
+function isE164(num) {
+  return /^\d{7,15}$/.test(num); // regra simples: 7–15 dígitos
+}
+
+// ================= Upload de mídia (opcional) =================
+async function uploadMediaFromUrl(url, type) {
+  // baixa a mídia e envia como multipart para o endpoint de upload
+  const download = await axios.get(url, { responseType: 'stream', timeout: 20000 });
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', download.data, 'media'); // nome genérico; o content-type vem do stream
+  // Observação: a Cloud API não exige "type" aqui; usamos apenas messaging_product+file
+
+  const uploadUrl = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/media`;
+  const res = await axios.post(uploadUrl, form, {
+    headers: {
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      ...form.getHeaders(),
+    },
+    timeout: 20000,
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+
+  const mediaId = res?.data?.id;
+  if (!mediaId) throw new Error('[WABA] Upload retornou sem id');
+  return mediaId;
+}
+
+// ============== Normalização de conteúdo por tipo ==============
+function coerceContent(type, content) {
+  // Aceita string para 'text'
+  if (typeof content === 'string' && type === 'text') {
+    return { body: content };
   }
 
-  await initDB();
-  const payload = buildPayload({ to, type, content, context });
+  const c = { ...(content || {}) };
+
+  // campos tolerantes: text/body e url/link
+  if (type === 'text') {
+    if (!c.body && c.text) c.body = c.text;
+  }
+
+  if (['image', 'audio', 'video', 'document'].includes(type)) {
+    if (!c.url && c.link) c.url = c.link; // adapter que manda "link"
+  }
+
+  return c;
+}
+
+// =================== Payload builder ====================
+async function buildPayload({ to, type, content, context }) {
+  const payload = {
+    messaging_product: 'whatsapp',
+    to,
+    type,
+  };
+
+  if (context?.message_id) {
+    payload.context = { message_id: context.message_id };
+  }
+
+  // MEDIA
+  if (['image', 'audio', 'video', 'document'].includes(type)) {
+    // Se já veio com id, usa direto
+    if (content.id) {
+      payload[type] = { id: content.id };
+      if (type === 'audio' && content.voice === true) payload[type].voice = true;
+      if (content.caption) payload[type].caption = content.caption;
+      if (content.filename && type === 'document') payload[type].filename = content.filename;
+      return payload;
+    }
+
+    // Se não há URL, erro claro
+    const mediaUrl = content.url;
+    if (!mediaUrl) throw new Error(`[WABA] ${type}.url/link é obrigatório`);
+
+    // Decide entre upload + id ou envio com link
+    const wantUpload = String(WABA_UPLOAD_MEDIA).toLowerCase() === 'true';
+
+    if (wantUpload) {
+      try {
+        const mediaId = await uploadMediaFromUrl(mediaUrl, type);
+        payload[type] = { id: mediaId };
+        if (type === 'audio' && content.voice === true) payload[type].voice = true;
+        if (content.caption) payload[type].caption = content.caption;
+        if (content.filename && type === 'document') payload[type].filename = content.filename;
+        return payload;
+      } catch (e) {
+        console.warn('[WABA] Upload falhou, caindo para envio por link. Motivo:', e?.message);
+      }
+    }
+
+    // fallback por link
+    payload[type] = { link: mediaUrl };
+    if (type === 'audio' && content.voice === true) payload[type].voice = true;
+    if (content.caption) payload[type].caption = content.caption;
+    if (content.filename && type === 'document') payload[type].filename = content.filename;
+    return payload;
+  }
+
+  // LOCATION
+  if (type === 'location') {
+    payload[type] = {
+      latitude: content.latitude,
+      longitude: content.longitude,
+      ...(content.name ? { name: content.name } : {}),
+      ...(content.address ? { address: content.address } : {}),
+    };
+    return payload;
+  }
+
+  // INTERACTIVE / TEMPLATE / OUTROS SUPORTADOS
+  // Conteúdo já deve estar no formato oficial da Cloud API
+  payload[type] = content;
+  return payload;
+}
+
+// ===================== Sender principal ======================
+export async function sendViaWhatsApp(job) {
+  assertEnvs();
+
+  // Normaliza entrada
+  const toRaw = job.to || job.userId || job.user_id;
+  const to = normalizeWaTo(toRaw);
+  const type = String(job.type || 'text').toLowerCase();
+  const content = coerceContent(type, job.content || {});
+  const context = job.context || undefined;
+
+  if (!isE164(to)) {
+    throw new Error(`[WABA] Destinatário inválido: "${toRaw}". Use DDI/DDD apenas dígitos, ex: 5521999998888`);
+  }
+
+  // Monta payload final
+  const payload = await buildPayload({ to, type, content, context });
+
+  // Envia para o Graph
   const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-
   try {
-    const { data } = await axios.post(url, payload, {
-      headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
-      timeout: 15000
+    const res = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
     });
 
-    const platformId = data?.messages?.[0]?.id || null;
+    const providerId = res?.data?.messages?.[0]?.id || null;
 
-    // atualiza DB (status=sent, message_id real)
-    await dbPool.query(
-      `UPDATE messages
-         SET status='sent',
-             message_id=COALESCE($1, message_id),
-             updated_at=NOW()
-       WHERE message_id=$2`,
-      [platformId, tempId]
-    );
-
-    // 🔔 emite atualização em tempo real (room = userId; evento: update_message)
-    await emitUpdateMessage({
-      id: platformId || tempId,
-      user_id: userId,                   // TEM que ser igual ao room que o front entrou
-      direction: 'outgoing',
-      status: 'sent',
-      content: { text: content?.body || '' },
-      timestamp: new Date().toISOString(),
-      channel: 'whatsapp'
-    });
-
-    return { ok: true, platformId };
-  } catch (e) {
-    const plat = e?.response?.data;
-
-    // registra erro no DB
+    // Notifica sucesso
     try {
-      await dbPool.query(
-        `UPDATE messages
-           SET status='error',
-               metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{error}', to_jsonb($1)),
-               updated_at=NOW()
-         WHERE message_id=$2`,
-        [plat || e?.message, tempId]
-      );
+      await emitUpdateMessage({
+        user_id: to,
+        channel: 'whatsapp',
+        message_id: job.tempId || providerId || null,
+        provider_id: providerId,
+        status: 'sent',
+      });
     } catch {}
 
-    // 🔔 emite erro em tempo real
-    await emitUpdateMessage({
-      id: tempId,
-      user_id: userId,
-      direction: 'outgoing',
-      status: 'error',
-      content: { text: content?.body || '' },
-      error: String(plat || e?.message || 'send_failed'),
-      timestamp: new Date().toISOString(),
-      channel: 'whatsapp'
-    });
+    return { ok: true, providerId, response: res.data };
+  } catch (err) {
+    const status = err.response?.status;
+    const data = err.response?.data;
+    console.error(`❌ [WABA] Falha ao enviar (status ${status ?? 'N/A'}):`, data?.error || err.message);
 
-    if (isFatalWhatsApp(plat)) {
-      return { ok: false, retry: false, reason: plat || e?.message };
-    }
-    return { ok: false, retry: true, reason: plat || e?.message };
+    // Notifica falha
+    try {
+      await emitUpdateMessage({
+        user_id: to,
+        channel: 'whatsapp',
+        message_id: job.tempId || null,
+        status: 'failed',
+        reason: data?.error?.message || err.message || 'send error',
+      });
+    } catch {}
+
+    // Propaga para retry/backoff do worker
+    throw err;
   }
 }
