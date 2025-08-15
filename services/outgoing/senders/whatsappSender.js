@@ -36,13 +36,6 @@ function isE164(num) {
   return /^\d{7,15}$/.test(num); // regra simples: 7–15 dígitos
 }
 
-// para emitir updates no mesmo "room" que a UI usa
-function resolveWaRoomUserId(userId, toDigits) {
-  if (userId && /@w\.msgcli\.net$/i.test(String(userId))) return userId;
-  const raw = String(userId || toDigits || '').replace(/@w\.msgcli\.net$/i, '');
-  return `${raw}@w.msgcli.net`;
-}
-
 // ================= Upload de mídia (opcional) =================
 async function uploadMediaFromUrl(url, type) {
   // baixa a mídia e envia como multipart para o endpoint de upload
@@ -50,7 +43,6 @@ async function uploadMediaFromUrl(url, type) {
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('file', download.data, 'media'); // nome genérico; o content-type vem do stream
-  // Observação: a Cloud API não exige "type" aqui; usamos apenas messaging_product+file
 
   const uploadUrl = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/media`;
   const res = await ax.post(uploadUrl, form, {
@@ -152,7 +144,6 @@ async function buildPayload({ to, type, content, context }) {
   }
 
   // INTERACTIVE / TEMPLATE / OUTROS SUPORTADOS
-  // Conteúdo já deve estar no formato oficial da Cloud API
   payload[type] = content;
   return payload;
 }
@@ -203,11 +194,10 @@ export async function sendViaWhatsApp(job) {
       console.warn('[whatsappSender] aviso ao atualizar DB (sent):', dbErr?.message);
     }
 
-    // Notifica sucesso (realtime) no room correto
+    // 🔔 Notifica sucesso (realtime) — (item 3 desfeito) usa user_id: to
     try {
-      const roomUserId = resolveWaRoomUserId(job.userId, to);
       await emitUpdateMessage({
-        user_id: roomUserId,
+        user_id: to, // <<< volta a usar 'to'
         channel: 'whatsapp',
         message_id: job.tempId || providerId || null,
         provider_id: providerId,
@@ -235,11 +225,10 @@ export async function sendViaWhatsApp(job) {
       console.warn('[whatsappSender] aviso ao atualizar DB (error):', dbErr?.message);
     }
 
-    // Notifica falha (realtime) no room correto
+    // 🔔 Notifica falha (realtime) — (item 3 desfeito) usa user_id: to
     try {
-      const roomUserId = resolveWaRoomUserId(job.userId, to);
       await emitUpdateMessage({
-        user_id: roomUserId,
+        user_id: to, // <<< volta a usar 'to'
         channel: 'whatsapp',
         message_id: job.tempId || null,
         status: 'failed',
