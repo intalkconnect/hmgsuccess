@@ -1,9 +1,18 @@
+// services/outgoing/senders/telegramSender.js
+import FormData from 'form-data';
+import { spawn } from 'child_process';
 import { ax } from '../../http/ax.js';
 import { initDB, dbPool } from '../../../engine/services/db.js';
-import { emitUpdateMessage } from '../../realtime/emitToRoom.js'; // via HTTP /emit
+import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
 
 const TG_TOKEN = process.env.TELEGRAM_TOKEN;
 const TG_BASE  = TG_TOKEN ? `https://api.telegram.org/bot${TG_TOKEN}` : null;
+// habilita transmux WEBM -> OGG/Opus quando voice:true ou link .webm
+const TG_TRANSMUX_WEBM = String(process.env.TG_TRANSMUX_WEBM ?? 'true').toLowerCase() === 'true';
+
+// ---------- helpers ----------
+const isWebm = (u='') => /\.webm(\?|#|$)/i.test(String(u));
+const isOgg  = (u='') => /\.ogg(\?|#|$)/i.test(String(u));
 
 function tgFatal(desc = '') {
   const d = String(desc).toLowerCase();
@@ -27,6 +36,53 @@ async function tgCall(method, payload) {
   throw err;
 }
 
+// ffmpeg transmux: WEBM (opus) -> OGG (opus), sem re-encode
+function spawnFfmpegWebmToOgg() {
+  return spawn('ffmpeg', ['-i', 'pipe:0', '-vn', '-c:a', 'copy', '-f', 'ogg', 'pipe:1'], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+}
+
+// Envia VOICE via multipart stream (rápido, sem escrever em disco)
+async function sendVoiceMultipartFromUrl({ chat_id, url, caption, reply_to_message_id }) {
+  const resp = await ax.get(url, { responseType: 'stream', timeout: 20000 });
+
+  let stream = resp.data;
+  let filename = 'voice.ogg';
+
+  const contentType = String(resp.headers['content-type'] || '');
+  const isWebmStream = isWebm(url) || /webm/i.test(contentType);
+
+  if (isWebmStream) {
+    if (!TG_TRANSMUX_WEBM) throw new Error('[TG] WEBM detectado e TG_TRANSMUX_WEBM=false');
+    const ff = spawnFfmpegWebmToOgg();
+    stream.pipe(ff.stdin);
+    stream = ff.stdout;
+  } else if (!isOgg(url) && !/ogg|opus/i.test(contentType)) {
+    // Telegram voice exige ogg/opus
+    throw new Error('[TG] Formato não suportado para voice (precisa ser ogg/opus)');
+  }
+
+  const form = new FormData();
+  form.append('chat_id', String(chat_id));
+  form.append('voice', stream, filename);
+  if (caption) form.append('caption', caption);
+  if (reply_to_message_id) form.append('reply_to_message_id', String(reply_to_message_id));
+
+  const { data } = await ax.post(`${TG_BASE}/sendVoice`, form, {
+    headers: form.getHeaders(),
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    timeout: 30000,
+  });
+
+  if (data?.ok) return data;
+  const err = new Error(data?.description || 'sendVoice falhou');
+  err._tg = data;
+  throw err;
+}
+
+// ============= SENDER PRINCIPAL =============
 export async function sendViaTelegram({ tempId, to, type, content, context }) {
   if (!TG_BASE) return { ok: false, retry: false, reason: 'TELEGRAM_TOKEN não configurado' };
   await initDB();
@@ -45,6 +101,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
         });
         break;
       }
+
       case 'image': {
         const photo = content?.url;
         if (!photo) throw new Error('Telegram: image.url obrigatório');
@@ -56,19 +113,41 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
         });
         break;
       }
+
       case 'audio': {
         const link = content?.url;
         if (!link) throw new Error('Telegram: audio.url obrigatório');
-        const method = content?.voice ? 'sendVoice' : 'sendAudio';
-        const field  = content?.voice ? 'voice'     : 'audio';
-        data = await tgCall(method, {
-          chat_id: to,
-          [field]: link,
-          ...(content?.caption ? { caption: content.caption } : {}),
-          ...(context?.message_id ? { reply_to_message_id: context.message_id } : {})
-        });
+
+        // voice:true ou .webm => enviar como VOICE (ogg/opus), transmuxando se necessário
+        if (content?.voice === true || isWebm(link)) {
+          try {
+            data = await sendVoiceMultipartFromUrl({
+              chat_id: to,
+              url: link,
+              caption: content?.caption,
+              reply_to_message_id: context?.message_id
+            });
+          } catch (_) {
+            // fallback: envia como documento
+            data = await tgCall('sendDocument', {
+              chat_id: to,
+              document: link,
+              ...(content?.caption ? { caption: content.caption } : {}),
+              ...(context?.message_id ? { reply_to_message_id: context.message_id } : {})
+            });
+          }
+        } else {
+          // áudio comum (mp3/m4a/ogg) por URL
+          data = await tgCall('sendAudio', {
+            chat_id: to,
+            audio: link,
+            ...(content?.caption ? { caption: content.caption } : {}),
+            ...(context?.message_id ? { reply_to_message_id: context.message_id } : {})
+          });
+        }
         break;
       }
+
       case 'video': {
         const link = content?.url;
         if (!link) throw new Error('Telegram: video.url obrigatório');
@@ -80,6 +159,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
         });
         break;
       }
+
       case 'document': {
         const link = content?.url;
         if (!link) throw new Error('Telegram: document.url obrigatório');
@@ -91,6 +171,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
         });
         break;
       }
+
       case 'location': {
         const lat = Number(content?.latitude), lng = Number(content?.longitude);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -104,6 +185,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
         });
         break;
       }
+
       default:
         return { ok: false, retry: false, reason: `Tipo não suportado no Telegram: ${type}` };
     }
@@ -124,7 +206,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
       [platformId, tempId]
     );
 
-    // 🔔 update_message — mesmo formato do WhatsApp
+    // 🔔 update_message — EXATAMENTE como estava
     await emitUpdateMessage({
       user_id: to,
       channel: 'telegram',
@@ -149,7 +231,7 @@ export async function sendViaTelegram({ tempId, to, type, content, context }) {
       );
     } catch {}
 
-    // 🔔 update_message — mesmo formato do WhatsApp (erro)
+    // 🔔 update_message — EXATAMENTE como estava (erro)
     await emitUpdateMessage({
       user_id: to,
       channel: 'telegram',
