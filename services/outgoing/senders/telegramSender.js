@@ -5,6 +5,14 @@ import { emitUpdateMessage } from '../../realtime/emitToRoom.js'; // via HTTP /e
 const TG_TOKEN = process.env.TELEGRAM_TOKEN;
 const TG_BASE  = TG_TOKEN ? `https://api.telegram.org/bot${TG_TOKEN}` : null;
 
+// 🔑 garante que o update vá para o mesmo "room" que a UI usa
+function resolveRoomUserId(userId, to) {
+  if (userId && /@t\.msgcli\.net$/i.test(String(userId))) return userId;
+  const raw = String(userId || to || '').replace(/@t\.msgcli\.net$/i, '');
+  return `${raw}@t.msgcli.net`;
+}
+
+
 function tgFatal(desc = '') {
   const d = String(desc).toLowerCase();
   return (
@@ -30,6 +38,8 @@ async function tgCall(method, payload) {
 export async function sendViaTelegram({ tempId, to, type, content, context, userId }) {
   if (!TG_BASE) return { ok: false, retry: false, reason: 'TELEGRAM_TOKEN não configurado' };
   await initDB();
+
+  const roomUserId = resolveRoomUserId(userId, to)
 
   try {
     let data;
@@ -114,14 +124,29 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       [platformId, tempId]
     );
 
-    // ✅ Atualização minimalista (alinhada ao WhatsApp): NÃO manda "content", usa "message_id"
-    await emitUpdateMessage({
-      user_id: userId,                 // tem que ser o mesmo room da UI
+// ✅ Update "safe": inclui chaves que a UI espera e não apaga o card
+    const mid = tempId || platformId || null;
+    const safeUpdate = {
+      user_id: roomUserId,         // room certo
       channel: 'telegram',
-      message_id: tempId || platformId, // mantém o provisional id pra UI resolver
+      id: mid,                     // muitos reducers usam 'id'
+      message_id: mid,             // também mantém 'message_id'
       provider_id: platformId || undefined,
-      status: 'sent'
-    });
+      status: 'sent',
+      direction: 'outgoing',       // preserva direção
+      type,                        // preserva tipo p/ preview/sort
+      timestamp: new Date().toISOString()
+    };
+    // só adiciona 'content' quando for realmente útil (evita sobrescrever mídia com vazio)
+    if (type === 'text' && content?.body) {
+      safeUpdate.content = { body: content.body };
+    } else if ((type === 'image' || type === 'video' || type === 'document') &&
+               (content?.filename || content?.caption)) {
+      safeUpdate.content = {};
+      if (content.filename) safeUpdate.content.filename = content.filename;
+      if (content.caption)  safeUpdate.content.caption  = content.caption;
+    }
+    await emitUpdateMessage(safeUpdate);
 
     return { ok: true, platformId };
   } catch (e) {
@@ -139,14 +164,28 @@ export async function sendViaTelegram({ tempId, to, type, content, context, user
       );
     } catch {}
 
-    // ❌ Atualização de erro (sem "content", com "message_id")
-    await emitUpdateMessage({
-      user_id: userId,
+  // ❌ Update de erro: mantém campos-base para não sumir o card na UI
+    const errUpdate = {
+      user_id: roomUserId,
       channel: 'telegram',
+      id: tempId,
       message_id: tempId,
       status: 'error',
-      reason: String(desc || 'send_failed')
-    });
+      reason: String(desc || 'send_failed'),
+      direction: 'outgoing',
+      type,
+      timestamp: new Date().toISOString()
+    };
+    // mesmo critério p/ 'content' do caso de sucesso (opcional)
+    if (type === 'text' && content?.body) {
+      errUpdate.content = { body: content.body };
+    } else if ((type === 'image' || type === 'video' || type === 'document') &&
+               (content?.filename || content?.caption)) {
+      errUpdate.content = {};
+      if (content.filename) errUpdate.content.filename = content.filename;
+      if (content.caption)  errUpdate.content.caption  = content.caption;
+    }
+    await emitUpdateMessage(errUpdate);
 
     if (tgFatal(desc)) {
       return { ok: false, retry: false, reason: desc };
