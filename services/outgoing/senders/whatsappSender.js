@@ -11,7 +11,7 @@ const {
   WHATSAPP_TOKEN: ACCESS_TOKEN,
   WABA_UPLOAD_MEDIA = 'true',
   // habilite se tiver ffmpeg no container (apk add --no-cache ffmpeg)
-  WABA_TRANSMUX_WEBM = 'false',
+  WABA_TRANSMUX_WEBM = 'true',
 } = process.env;
 
 // ==================== Util/Guard rails ===================
