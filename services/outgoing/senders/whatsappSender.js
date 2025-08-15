@@ -2,6 +2,7 @@
 import FormData from 'form-data';
 import { ax } from '../../http/ax.js';
 import { emitUpdateMessage } from '../../realtime/emitToRoom.js';
+import { initDB, dbPool } from '../../../engine/services/db.js';
 
 // ======================= ENVs =======================
 const {
@@ -33,6 +34,13 @@ function normalizeWaTo(to) {
 
 function isE164(num) {
   return /^\d{7,15}$/.test(num); // regra simples: 7–15 dígitos
+}
+
+// para emitir updates no mesmo "room" que a UI usa
+function resolveWaRoomUserId(userId, toDigits) {
+  if (userId && /@w\.msgcli\.net$/i.test(String(userId))) return userId;
+  const raw = String(userId || toDigits || '').replace(/@w\.msgcli\.net$/i, '');
+  return `${raw}@w.msgcli.net`;
 }
 
 // ================= Upload de mídia (opcional) =================
@@ -152,6 +160,7 @@ async function buildPayload({ to, type, content, context }) {
 // ===================== Sender principal ======================
 export async function sendViaWhatsApp(job) {
   assertEnvs();
+  await initDB();
 
   // Normaliza entrada
   const toRaw = job.to || job.userId || job.user_id;
@@ -180,10 +189,25 @@ export async function sendViaWhatsApp(job) {
 
     const providerId = res?.data?.messages?.[0]?.id || null;
 
-    // Notifica sucesso
+    // ✅ Atualiza DB: status 'sent' + troca tempId -> providerId (se veio)
     try {
+      await dbPool.query(
+        `UPDATE messages
+           SET status='sent',
+               message_id=COALESCE($1, message_id),
+               updated_at=NOW()
+         WHERE message_id=$2`,
+        [providerId, job.tempId]
+      );
+    } catch (dbErr) {
+      console.warn('[whatsappSender] aviso ao atualizar DB (sent):', dbErr?.message);
+    }
+
+    // Notifica sucesso (realtime) no room correto
+    try {
+      const roomUserId = resolveWaRoomUserId(job.userId, to);
       await emitUpdateMessage({
-        user_id: to,
+        user_id: roomUserId,
         channel: 'whatsapp',
         message_id: job.tempId || providerId || null,
         provider_id: providerId,
@@ -197,10 +221,25 @@ export async function sendViaWhatsApp(job) {
     const data = err.response?.data;
     console.error(`❌ [WABA] Falha ao enviar (status ${status ?? 'N/A'}):`, data?.error || err.message);
 
-    // Notifica falha
+    // ❌ Atualiza DB: status 'error' + anexa erro em metadata
     try {
+      await dbPool.query(
+        `UPDATE messages
+           SET status='error',
+               metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{error}', to_jsonb($1)),
+               updated_at=NOW()
+         WHERE message_id=$2`,
+        [data?.error || err.message, job.tempId]
+      );
+    } catch (dbErr) {
+      console.warn('[whatsappSender] aviso ao atualizar DB (error):', dbErr?.message);
+    }
+
+    // Notifica falha (realtime) no room correto
+    try {
+      const roomUserId = resolveWaRoomUserId(job.userId, to);
       await emitUpdateMessage({
-        user_id: to,
+        user_id: roomUserId,
         channel: 'whatsapp',
         message_id: job.tempId || null,
         status: 'failed',
