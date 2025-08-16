@@ -1,6 +1,6 @@
 // routes/analytics.js
 export default async function analyticsRoutes(fastify, opts) {
-  fastify.get('/atendimentos', async (req, res) => {
+  fastify.get('/realtime', async (req, res) => {
     try {
       const atendimentos = await req.db.any(`
         SELECT
