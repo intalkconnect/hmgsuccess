@@ -18,6 +18,7 @@ import chatsRoutes from './routes/chats.js';
 import filaRoutes from './routes/filas.js';
 import atendentesRoutes from './routes/atendentes.js';
 import quickRepliesRoutes from './routes/quickReplies.js';
+import analyticsRoutes from './routes/analytics.js';
 
 dotenv.config();
 
@@ -52,6 +53,7 @@ async function buildServer() {
   fastify.register(filaRoutes,     { prefix: '/api/v1/filas' });
   fastify.register(atendentesRoutes, { prefix: '/api/v1/atendentes' });
   fastify.register(quickRepliesRoutes, { prefix: '/api/v1/quickReplies' });
+  fastify.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
 
   return fastify;
 }
@@ -71,4 +73,5 @@ async function start() {
 }
 
 start();
+
 
