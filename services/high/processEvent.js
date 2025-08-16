@@ -42,6 +42,19 @@ async function upsertIncomingMessage({ channel, userId, messageId, msgType, cont
   return res.rows?.[0]; // undefined => duplicate
 }
 
+// 🔎 envia para o front já com content "objeto" (e não string JSON)
+function parseForEmit(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') {
+    const s = content.trim();
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try { return JSON.parse(s); } catch { return content; }
+    }
+    return content;
+  }
+  return content;
+}
+
 async function getActiveFlow() {
   const { rows } = await dbPool.query(`SELECT * FROM flows WHERE active = true LIMIT 1`);
   return rows[0]?.data || null;
@@ -73,8 +86,13 @@ async function processWhatsApp(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  // envia para a SALA correta (somente esse cliente vê)
-  await emitToRoom({ room: userId, event: 'new_message',    payload: inserted });
+  // ✅ emite já com content parseado (objeto)
+  await emitToRoom({
+    room: userId,
+    event: 'new_message',
+    payload: { ...inserted, content: parseForEmit(inserted.content) }
+  });
+
   await emitToRoom({ room: userId, event: 'bot_processing', payload: { user_id: userId, status: 'processing' } });
 
   const flow = await getActiveFlow();
@@ -128,7 +146,13 @@ async function processTelegram(evt, { io } = {}) {
   });
   if (!inserted) return 'duplicate';
 
-  await emitToRoom({ room: userId, event: 'new_message',    payload: inserted });
+  // ✅ emite já com content parseado (objeto)
+  await emitToRoom({
+    room: userId,
+    event: 'new_message',
+    payload: { ...inserted, content: parseForEmit(inserted.content) }
+  });
+
   await emitToRoom({ room: userId, event: 'bot_processing', payload: { user_id: userId, status: 'processing' } });
 
   const flow = await getActiveFlow();
