@@ -16,13 +16,6 @@ export default async function analyticsRoutes(fastify, opts) {
             ELSE 'em_atendimento'
           END AS status,
           EXTRACT(EPOCH FROM (now() - t.created_at)) / 60 AS tempo_espera,
-          (
-            SELECT content
-            FROM hmg.messages m2
-            WHERE m2.user_id = t.user_id
-            ORDER BY m2."timestamp" DESC
-            LIMIT 1
-          ) AS ultima_mensagem
         FROM hmg.tickets t
         JOIN hmg.clientes c ON c.user_id = t.user_id
         LEFT JOIN hmg.atendentes a ON a.email::text = t.assigned_to
@@ -42,7 +35,6 @@ export default async function analyticsRoutes(fastify, opts) {
         fila: a.fila,
         posicaoFila: null, // adicionar lógica se quiser
         inicioConversa: a.inicio_conversa,
-        ultimaMensagem: a.ultima_mensagem,
       }));
 
       return mapped;
