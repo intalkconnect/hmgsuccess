@@ -17,6 +17,14 @@ export const CHANNELS = {
   WEBCHAT: 'webchat'
 };
 
+export const SYSTEM_EVENT = 'system_event';
+
+export const TICKET_STATUS = {
+  OPEN: 'open',
+  TRANSFER: 'transfer',
+  CLOSED: 'closed',
+};
+
 export const UNIFIED_PAYLOAD_SCHEMA = {
   // Campos comuns a todos os canais
   common: {
