@@ -237,75 +237,96 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    /* ---------- HUMAN + horários por fila ---------- */
-    if (block.type === 'human') {
-      if (block.content?.queueName) {
-        sessionVars.fila = block.content.queueName;
-        console.log(`[🧭 fila do bloco: ${sessionVars.fila}]`);
-      }
+ /* ---------- HUMAN + horários por fila (diferenciando feriado x fechado) ---------- */
+if (block.type === 'human') {
+  if (block.content?.queueName) {
+    sessionVars.fila = block.content.queueName;
+    console.log(`[🧭 fila do bloco: ${sessionVars.fila}]`);
+  }
 
-      const bhCfg = await loadQueueBH(sessionVars.fila);
-      const { open } = bhCfg ? isOpenNow(bhCfg) : { open: true };
+  const bhCfg = await loadQueueBH(sessionVars.fila);
+  const { open, reason } = bhCfg ? isOpenNow(bhCfg) : { open: true, reason: null };
 
-      sessionVars.offhours = !open;
-      sessionVars.offhours_queue = sessionVars.fila || null;
+  // popula variáveis p/ condições no builder
+  sessionVars.offhours = !open;
+  sessionVars.offhours_reason = reason;       // "holiday" | "closed" | null
+  sessionVars.isHoliday = reason === 'holiday';
+  sessionVars.offhours_queue = sessionVars.fila || null;
 
-      if (!open) {
-        if (bhCfg?.off_hours) {
-          await sendConfiguredMessage(bhCfg.off_hours, {
-            channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
-          });
-        }
+  if (!open) {
+    // Escolhe mensagem por motivo (com fallback para formato antigo)
+    const msgCfg =
+      (reason === 'holiday' && bhCfg?.off_hours?.holiday) ? bhCfg.off_hours.holiday :
+      (reason === 'closed'  && bhCfg?.off_hours?.closed ) ? bhCfg.off_hours.closed  :
+      bhCfg?.off_hours || null;
 
-        // 1º tenta actions do bloco (ex.: offhours == true)
-        let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
-
-        // 2º fallback do config (id/label)
-        if (!nextBlock) {
-          const cfgNext = resolveByIdOrLabel(flow, bhCfg?.off_hours?.next);
-          nextBlock = cfgNext || (flow.blocks?.offhours ? 'offhours' : onErrorId);
-        }
-        nextBlock = nextBlock || currentBlockId;
-
-        await saveSession(userId, nextBlock, flow.id, sessionVars);
-        currentBlockId = nextBlock;
-        continue; // NÃO abre handover quando fechado
-      }
-
-      // aberto: manda pre-human uma única vez
-      const preEnabled = bhCfg?.pre_human?.enabled !== false;
-      const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
-      if (preEnabled && !preAlreadySent) {
-        if (bhCfg?.pre_human) {
-          await sendConfiguredMessage(bhCfg.pre_human, {
-            channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
-          });
-        } else if (block.content?.transferMessage) {
-          await sendConfiguredMessage(
-            { type: 'text', message: block.content.transferMessage },
-            { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
-          );
-        }
-      }
-
-      sessionVars.handover = {
-        ...(sessionVars.handover || {}),
-        status: 'open',
-        originBlock: currentBlockId,
-        preMsgSent: true
-      };
-      sessionVars.previousBlock = currentBlockId;
-      sessionVars.offhours = false;
-
-      await saveSession(userId, 'human', flow.id, sessionVars);
-
-      try { await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); } catch (e) {
-        console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
-      }
-      return null;
+    if (msgCfg) {
+      await sendConfiguredMessage(msgCfg, {
+        channel: sessionVars.channel || CHANNELS.WHATSAPP,
+        userId, io
+      });
     }
+
+    // Descobre "next" por motivo (ordem de precedência + compat)
+    let cfgNext = null;
+    if (reason === 'holiday') {
+      cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextHoliday ?? bhCfg?.off_hours?.next ?? null;
+    } else {
+      cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextClosed  ?? bhCfg?.off_hours?.next ?? null;
+    }
+
+    // 1º: respeita actions do bloco (ex.: offhours == true e/ou offhours_reason == "holiday")
+    let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
+
+    // 2º: se não veio das actions, usa o configurado no banco (id ou label)
+    if (!nextBlock && cfgNext) {
+      nextBlock = resolveByIdOrLabel(flow, cfgNext);
+    }
+
+    // 3º: fallbacks finais
+    if (!nextBlock) nextBlock = flow.blocks?.offhours ? 'offhours' : resolveOnErrorId(flow);
+    nextBlock = nextBlock || currentBlockId;
+
+    await saveSession(userId, nextBlock, flow.id, sessionVars);
+    currentBlockId = nextBlock;
+    continue; // NÃO abre handover quando fechado
+  }
+
+  // ⚡️ aberto: envia pre-human uma única vez
+  const preEnabled = bhCfg?.pre_human?.enabled !== false;
+  const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
+  if (preEnabled && !preAlreadySent) {
+    if (bhCfg?.pre_human) {
+      await sendConfiguredMessage(bhCfg.pre_human, {
+        channel: sessionVars.channel || CHANNELS.WHATSAPP,
+        userId, io
+      });
+    } else if (block.content?.transferMessage) {
+      await sendConfiguredMessage(
+        { type: 'text', message: block.content.transferMessage },
+        { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
+      );
+    }
+  }
+
+  sessionVars.handover = {
+    ...(sessionVars.handover || {}),
+    status: 'open',
+    originBlock: currentBlockId,
+    preMsgSent: true
+  };
+  sessionVars.previousBlock = currentBlockId;
+  sessionVars.offhours = false;
+  sessionVars.offhours_reason = null;
+  sessionVars.isHoliday = false;
+
+  await saveSession(userId, 'human', flow.id, sessionVars);
+
+  try { await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); } catch (e) {
+    console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
+  }
+  return null;
+}
 
     /* ---------- Conteúdo / API / Script ---------- */
     let content = '';
