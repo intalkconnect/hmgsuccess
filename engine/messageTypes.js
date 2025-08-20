@@ -18,11 +18,12 @@ export const CHANNELS = {
 };
 
 export const SYSTEM_EVENT = 'system_event';
+export const SYSTEM_EVT_TICKET_STATUS = 'ticket_status';
 
 export const TICKET_STATUS = {
   OPEN: 'open',
-  TRANSFER: 'transfer',
   CLOSED: 'closed',
+  TRANSFER: 'transfer',
 };
 
 export const UNIFIED_PAYLOAD_SCHEMA = {
