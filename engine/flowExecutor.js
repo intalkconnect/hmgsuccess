@@ -1,5 +1,4 @@
 // engine/flowExecutor.js
-
 import axios from 'axios';
 import vm from 'vm';
 
@@ -10,6 +9,15 @@ import { sendMessageByChannel } from './messenger.js';
 import { distribuirTicket } from './ticketManager.js';
 import { CHANNELS } from './messageTypes.js';
 
+// Resolve o ID do bloco onError tanto por chave especial quanto por label
+function resolveOnErrorId(flow) {
+  if (flow?.blocks?.onerror) return 'onerror';
+  const entry = Object.entries(flow?.blocks || {}).find(
+    ([, b]) => (b?.label || '').toLowerCase() === 'onerror'
+  );
+  return entry ? entry[0] : null;
+}
+
 /**
  * Executa um fluxo JSON de atendimento. Sempre envia mensagens via fila (worker-outgoing).
  * - Se a sessão estiver em humano: não automatiza; apenas garante distribuição do ticket.
@@ -18,7 +26,6 @@ import { CHANNELS } from './messageTypes.js';
  * - Para blocos que aguardam resposta (awaitResponse): interrompe o loop até próxima mensagem do usuário.
  */
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
-  // userId interno (padrão WhatsApp). O messenger normaliza "to" por canal.
   const userId = `${rawUserId}@w.msgcli.net`;
 
   // 0) Sanidade do fluxo
@@ -26,22 +33,21 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
+  // ✅ descobrir o onError logo no início
+  const onErrorId = resolveOnErrorId(flow);
+
   // 1) Carrega (ou inicializa) sessão e vars
   const session = await loadSession(userId);
   let sessionVars = { ...(vars || {}), ...(session?.vars || {}) };
 
-  // canal default
   if (!sessionVars.channel) sessionVars.channel = CHANNELS.WHATSAPP;
 
   let currentBlockId = null;
 
-  // 2) Se já estiver em atendimento humano, garante distribuição OU retoma se já foi fechado (ADICIONADO)
+  // 2) Sessão em HUMANO
   if (session?.current_block === 'human') {
     const sVars = { ...(session?.vars || {}) };
 
-    // 👉 Caso o worker já tenha marcado fechamento (evento de "finalizar"):
-    //    - sVars.handover.status === 'closed'
-    //    - sVars.ticket.number já contém o número final do ticket (gravado pelo worker)
     if (sVars?.handover?.status === 'closed') {
       const originId = sVars?.handover?.originBlock;
       const originBlock = originId ? flow.blocks[originId] : null;
@@ -54,15 +60,13 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       // Fallbacks
       if (!nextFromHuman || !flow.blocks[nextFromHuman]) {
         if (flow.blocks?.onhumanreturn) nextFromHuman = 'onhumanreturn';
-        else if (flow.blocks?.onerror)  nextFromHuman = 'onerror';
-        else                            nextFromHuman = flow.start;
+        else if (onErrorId)           nextFromHuman = onErrorId;
+        else                          nextFromHuman = flow.start;
       }
 
-      // Preserva todas as variáveis que o worker já gravou (inclui ticket.number)
       sessionVars = { ...(vars || {}), ...sVars };
-      currentBlockId = nextFromHuman; // segue o fluxo a partir daqui
+      currentBlockId = nextFromHuman;
     } else {
-      // atendimento ainda em humano → só redistribui e sai
       try {
         await distribuirTicket(rawUserId, sVars.fila, sVars.channel);
       } catch (e) {
@@ -72,12 +76,11 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     }
   }
 
-  // 3) Determina bloco inicial (retomada ou start) — apenas se ainda não decidimos acima (ADICIONADO o guard)
+  // 3) Determina bloco inicial (retomada ou start)
   if (currentBlockId == null) {
     if (session?.current_block && flow.blocks[session.current_block]) {
       const storedBlock = session.current_block;
 
-      // Se o último bloco foi uma "despedida", reinicia do start
       if (storedBlock === 'despedida') {
         currentBlockId = flow.start;
         sessionVars = { ...sessionVars };
@@ -86,8 +89,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         const awaiting = flow.blocks[storedBlock];
 
         if (awaiting.actions && awaiting.actions.length > 0) {
-          // Esse bloco estava aguardando resposta do usuário
-          if (!message) return null; // ainda aguardando
+          if (!message) return null; // aguardando resposta
           sessionVars.lastUserMessage = message;
 
           let next = null;
@@ -100,16 +102,14 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           if (!next && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
             next = awaiting.defaultNext;
           }
-          if (!next && flow.blocks.onerror) next = 'onerror';
+          if (!next && onErrorId) next = onErrorId;
 
-          currentBlockId = next || storedBlock; // fallback de segurança
+          currentBlockId = next || storedBlock;
         } else {
-          // O bloco anterior não aguardava resposta; continua dele
           currentBlockId = storedBlock;
         }
       }
     } else {
-      // Sem sessão existente: inicia no "start"
       currentBlockId = flow.start;
       sessionVars.lastUserMessage = message;
     }
@@ -117,20 +117,18 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   let lastResponse = null;
 
-  // 4) Loop principal do fluxo
+  // 4) Loop principal
   while (currentBlockId) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    // 4.1) Se o bloco for "human": salva estado, distribui ticket e interrompe
+    // 4.1) Bloco humano
     if (block.type === 'human') {
-      // Captura queueName do bloco (se houver)
       if (block.content?.queueName) {
         sessionVars.fila = block.content.queueName;
         console.log(`[🧭 Fila capturada do bloco: "${sessionVars.fila}"]`);
       }
 
-      // (ADICIONADO) memoriza a origem e marca handover aberto — usado para retomar após fechamento
       sessionVars.handover = {
         ...(sessionVars.handover || {}),
         status: 'open',
@@ -138,20 +136,18 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       };
       sessionVars.previousBlock = currentBlockId;
 
-      // Persiste sessão como HUMANO
       await saveSession(userId, 'human', flow.id, sessionVars);
 
-      // Distribui para atendimento humano
       try {
         await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
       } catch (e) {
         console.error('[flowExecutor] Falha ao distribuir ticket (bloco human):', e);
       }
 
-      return null; // interrompe automação aqui
+      return null;
     }
 
-    // 4.2) Prepara conteúdo do bloco (com substituição de variáveis)
+    // 4.2) Monta conteúdo
     let content = '';
     if (block.content != null) {
       try {
@@ -164,7 +160,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
     }
 
-    // 4.3) Execução de API/SCRIPT que alimentam o conteúdo e variáveis
+    // 4.3) API / Script
     try {
       if (block.type === 'api_call') {
         const url = substituteVariables(block.url, sessionVars);
@@ -207,16 +203,14 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
     } catch (e) {
       console.error('[flowExecutor] Erro executando api_call/script:', e);
-      // mantém content vazio; next resolverá para onerror se configurado
     }
 
-    // 4.4) Envio de mensagem (passa sempre pelo worker-outgoing)
+    // 4.4) Envio da mensagem
     const sendableTypes = [
       'text', 'image', 'audio', 'video', 'file', 'document', 'location', 'interactive'
     ];
 
     if (content && sendableTypes.includes(block.type)) {
-      // Delay antes do envio, se configurado
       if (block.sendDelayInSeconds) {
         const ms = Number(block.sendDelayInSeconds) * 1000;
         if (!Number.isNaN(ms) && ms > 0) {
@@ -225,12 +219,8 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
 
       try {
-        // Normaliza payload para texto simples quando vier string
-        const messageContent = (typeof content === 'string')
-          ? { text: content }
-          : content;
+        const messageContent = (typeof content === 'string') ? { text: content } : content;
 
-        // Enfileira via messenger (que persiste "pending" e retorna o registro)
         const pendingRecord = await sendMessageByChannel(
           sessionVars.channel || CHANNELS.WHATSAPP,
           userId,
@@ -240,7 +230,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
         lastResponse = pendingRecord;
 
-        // Emite para o front (socket global e sala do chat)
         if (io && pendingRecord) {
           try { io.emit('new_message', pendingRecord); } catch {}
           try { io.to(`chat-${userId}`).emit('new_message', pendingRecord); } catch {}
@@ -248,7 +237,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       } catch (mediaErr) {
         console.error('❌ Falha ao enviar mídia (será enviado fallback):', mediaErr);
 
-        // Fallback simples de texto com URL ou conteúdo
         const fallback =
           (typeof content === 'object' && content?.url)
             ? `Aqui está seu conteúdo: ${content.url}`
@@ -276,58 +264,42 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
     }
 
-// 4.5) Decide próximo bloco
-let nextBlock;
-if (currentBlockId === onErrorId) {
-  // 🔁 voltando do erro: prefira o bloco anterior; se não houver, vá para o start
-  const back = sessionVars.previousBlock;
-  nextBlock = (back && flow.blocks[back]) ? back : flow.start;
-} else {
-  nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
-}
+    // 4.5) Decide próximo bloco
+    let nextBlock;
+    if (currentBlockId === onErrorId) {
+      // Voltando do erro: tenta voltar para o anterior; se não houver, vai para o start
+      const back = sessionVars.previousBlock;
+      nextBlock = (back && flow.blocks[back]) ? back : flow.start;
+    } else {
+      nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
+    }
 
-let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
+    let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
 
-// Substitui placeholders (ex: {previousBlock})
-if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
-  resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
-}
-
-// Se não existir no fluxo, cai para onerror (id resolvido)
-if (!flow.blocks[resolvedBlock]) {
-  resolvedBlock = onErrorId || null;
-}
-
-
-    // Substitui placeholders (ex: {previousBlock})
+    // Placeholders (ex: {previousBlock})
     if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
       resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
     }
 
-    // Se não existir no fluxo, vai para onerror (se houver)
-    if (!flow.blocks[resolvedBlock]) {
-      resolvedBlock = flow.blocks.onerror ? 'onerror' : null;
+    // Se não existir no fluxo, cai para onError
+    if (resolvedBlock && !flow.blocks[resolvedBlock]) {
+      resolvedBlock = onErrorId || null;
     }
 
     // 🔒 Pausar se redirecionar para o START (somente quando vindo de outro bloco)
-const redirectingToStart =
-  resolvedBlock === flow.start && currentBlockId !== flow.start;
+    const redirectingToStart =
+      resolvedBlock === flow.start && currentBlockId !== flow.start;
 
-if (redirectingToStart) {
-  // (Opcional) Limpar variáveis transitórias aqui, se fizer sentido:
-  // delete sessionVars.lastUserMessage;
+    if (redirectingToStart) {
+      await saveSession(userId, flow.start, flow.id, sessionVars);
+      break; // pausa até nova mensagem do usuário
+    }
 
-  // Salva a sessão no START e interrompe a automação
-  await saveSession(userId, flow.start, flow.id, sessionVars);
-  break; // <- para o loop; só retoma quando chegar nova mensagem
-}
-
-
-    // 4.6) Atualiza previousBlock (anti-loop simples)
+    // 4.6) Atualiza previousBlock (não sobrescrever quando estamos no onError)
     if (
-      currentBlockId !== 'onerror' &&
+      currentBlockId !== onErrorId &&
       resolvedBlock &&
-      resolvedBlock !== 'onerror'
+      resolvedBlock !== onErrorId
     ) {
       sessionVars.previousBlock = currentBlockId;
     }
@@ -338,7 +310,7 @@ if (redirectingToStart) {
     // 4.8) Se o bloco aguarda resposta do usuário, interrompe o loop
     if (block.awaitResponse) break;
 
-    // 4.9) Delay pós-bloco, se configurado
+    // 4.9) Delay pós-bloco
     if (
       block.awaitTimeInSeconds != null &&
       block.awaitTimeInSeconds !== false &&
@@ -348,7 +320,7 @@ if (redirectingToStart) {
       await new Promise(r => setTimeout(r, Number(block.awaitTimeInSeconds) * 1000));
     }
 
-    // 4.10) Avança para o próximo bloco
+    // 4.10) Avança
     currentBlockId = resolvedBlock;
   }
 
