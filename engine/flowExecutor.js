@@ -276,9 +276,28 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
     }
 
-    // 4.5) Decide próximo bloco
-    let nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
-    let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
+// 4.5) Decide próximo bloco
+let nextBlock;
+if (currentBlockId === onErrorId) {
+  // 🔁 voltando do erro: prefira o bloco anterior; se não houver, vá para o start
+  const back = sessionVars.previousBlock;
+  nextBlock = (back && flow.blocks[back]) ? back : flow.start;
+} else {
+  nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
+}
+
+let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
+
+// Substitui placeholders (ex: {previousBlock})
+if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
+  resolvedBlock = substituteVariables(resolvedBlock, sessionVars);
+}
+
+// Se não existir no fluxo, cai para onerror (id resolvido)
+if (!flow.blocks[resolvedBlock]) {
+  resolvedBlock = onErrorId || null;
+}
+
 
     // Substitui placeholders (ex: {previousBlock})
     if (typeof resolvedBlock === 'string' && resolvedBlock.includes('{')) {
