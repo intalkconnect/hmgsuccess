@@ -4,6 +4,8 @@ import { dbPool } from '../../engine/services/db.js'; // já inicializado no wor
 import { runFlow } from '../../engine/flowExecutor.js';
 import { processMediaIfNeeded } from './processFileHeavy.js';
 import { emitToRoom } from '../realtime/emitToRoom.js'; // <-- usa helper via HTTP /emit
+import { SYSTEM_EVENT, SYSTEM_EVT_TICKET_STATUS } from '../../engine/messageTypes.js';
+import { handleTicketStatusEvent } from './handleTicketStatusEvent.js';
 
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
@@ -178,6 +180,12 @@ async function processTelegram(evt, { io } = {}) {
 
 /* ===================== Router ===================== */
 export async function processEvent(evt, { io } = {}) {
+
+    if (evt?.kind === SYSTEM_EVENT && evt?.event?.type === SYSTEM_EVT_TICKET_STATUS) {
+    await handleTicketStatusEvent(evt.event, { io });
+    return 'ok';
+  }
+  
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
   if (ch === 'whatsapp') return processWhatsApp(evt, { io });
