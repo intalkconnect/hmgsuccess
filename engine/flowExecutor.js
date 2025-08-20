@@ -14,7 +14,6 @@ import { loadQueueBH } from './queueHoursService.js';
 
 /* --------------------------- helpers --------------------------- */
 
-// Resolve o ID do bloco onError tanto por chave especial quanto por label
 function resolveOnErrorId(flow) {
   if (flow?.blocks?.onerror) return 'onerror';
   const entry = Object.entries(flow?.blocks || {}).find(
@@ -23,7 +22,6 @@ function resolveOnErrorId(flow) {
   return entry ? entry[0] : null;
 }
 
-// Normaliza mensagem inbound: extrai id/title/text de botões/listas etc
 function parseInboundMessage(msg) {
   const out = { text: null, id: null, title: null, type: null };
   try {
@@ -33,7 +31,6 @@ function parseInboundMessage(msg) {
       return out;
     }
     if (!msg || typeof msg !== 'object') return out;
-
     const m = (msg.message || msg);
     out.type = m.type || msg.type || null;
 
@@ -49,7 +46,6 @@ function parseInboundMessage(msg) {
       out.type = 'interactive.list_reply';
       return out;
     }
-
     if (m.button?.payload || m.button?.text) {
       out.id = m.button.payload ?? null;
       out.title = m.button.text ?? null;
@@ -75,7 +71,6 @@ function parseInboundMessage(msg) {
   return out;
 }
 
-// tira acentos, emojis/pontuação e baixa tudo p/ comparar
 function normalizeStr(v) {
   if (v == null) return '';
   let s = String(v);
@@ -83,7 +78,6 @@ function normalizeStr(v) {
   return s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-// avalia conditions com fallback para id/title/normalização
 function evalConditionsSmart(conditions = [], vars = {}) {
   if (evaluateConditions(conditions, vars)) return true;
 
@@ -113,7 +107,6 @@ function evalConditionsSmart(conditions = [], vars = {}) {
   return evaluateConditions(cNorm, vNorm);
 }
 
-// determina next por actions (com eval smart) e defaultNext
 function determineNextSmart(block, vars, flow, currentId) {
   for (const action of block?.actions || []) {
     if (evalConditionsSmart(action.conditions || [], vars)) {
@@ -126,7 +119,6 @@ function determineNextSmart(block, vars, flow, currentId) {
   return null;
 }
 
-// envia content configurado (texto/payload), com delay opcional
 async function sendConfiguredMessage(entry, { channel, userId, io }) {
   if (!entry) return null;
   if (entry.delayMs) {
@@ -153,7 +145,6 @@ async function sendConfiguredMessage(entry, { channel, userId, io }) {
   }
 }
 
-// resolve id por id ou label
 function resolveByIdOrLabel(flow, key) {
   if (!key) return null;
   if (flow.blocks[key]) return key;
@@ -205,7 +196,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     }
   }
 
-  // inicial: parse da mensagem e retomada/start
+  // inicial: parse e retomada/start
   if (currentBlockId == null) {
     const inbound = parseInboundMessage(message);
 
@@ -234,7 +225,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       currentBlockId = flow.start;
     }
 
-    // popula variáveis de entrada no início
     sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
     sessionVars.lastReplyId = inbound.id ?? null;
     sessionVars.lastReplyTitle = inbound.title ?? null;
@@ -247,24 +237,20 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    /* ---------- BLOCO HUMAN com horário por FILA ---------- */
+    /* ---------- HUMAN + horários por fila ---------- */
     if (block.type === 'human') {
-      // define fila a partir do bloco (ou mantém a existente)
       if (block.content?.queueName) {
         sessionVars.fila = block.content.queueName;
         console.log(`[🧭 fila do bloco: ${sessionVars.fila}]`);
       }
 
-      // lê config da fila e calcula aberto/fechado
       const bhCfg = await loadQueueBH(sessionVars.fila);
-      const open = bhCfg ? isOpenNow(bhCfg).open : true;
+      const { open } = bhCfg ? isOpenNow(bhCfg) : { open: true };
 
-      // seta flag para o builder/conditions
       sessionVars.offhours = !open;
       sessionVars.offhours_queue = sessionVars.fila || null;
 
       if (!open) {
-        // fora do horário: envia mensagem configurada
         if (bhCfg?.off_hours) {
           await sendConfiguredMessage(bhCfg.off_hours, {
             channel: sessionVars.channel || CHANNELS.WHATSAPP,
@@ -272,10 +258,10 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           });
         }
 
-        // decide próximo: 1) actions do bloco (ex.: offhours==true)
+        // 1º tenta actions do bloco (ex.: offhours == true)
         let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
 
-        // 2) fallback por configuração "off_hours.next"
+        // 2º fallback do config (id/label)
         if (!nextBlock) {
           const cfgNext = resolveByIdOrLabel(flow, bhCfg?.off_hours?.next);
           nextBlock = cfgNext || (flow.blocks?.offhours ? 'offhours' : onErrorId);
@@ -284,10 +270,10 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
         await saveSession(userId, nextBlock, flow.id, sessionVars);
         currentBlockId = nextBlock;
-        continue; // NÃO entra em humano se fechado
+        continue; // NÃO abre handover quando fechado
       }
 
-      // aberto: envia mensagem pré-handover 1x
+      // aberto: manda pre-human uma única vez
       const preEnabled = bhCfg?.pre_human?.enabled !== false;
       const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
       if (preEnabled && !preAlreadySent) {
@@ -297,7 +283,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
             userId, io
           });
         } else if (block.content?.transferMessage) {
-          // compat com seu campo antigo
           await sendConfiguredMessage(
             { type: 'text', message: block.content.transferMessage },
             { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
@@ -305,7 +290,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         }
       }
 
-      // abre handover
       sessionVars.handover = {
         ...(sessionVars.handover || {}),
         status: 'open',
@@ -317,12 +301,10 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
       await saveSession(userId, 'human', flow.id, sessionVars);
 
-      try {
-        await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
-      } catch (e) {
+      try { await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); } catch (e) {
         console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
       }
-      return null; // para automação (aguarda humano)
+      return null;
     }
 
     /* ---------- Conteúdo / API / Script ---------- */
@@ -380,7 +362,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       console.error('[flowExecutor] Erro executando api_call/script:', e);
     }
 
-    /* ---------- Envio de mensagem ---------- */
+    /* ---------- Envio ---------- */
     const sendableTypes = ['text','image','audio','video','file','document','location','interactive'];
 
     if (content && sendableTypes.includes(block.type)) {
@@ -423,7 +405,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       }
     }
 
-    /* ---------- Próximo bloco ---------- */
+    /* ---------- Próximo ---------- */
     let nextBlock;
     if (currentBlockId === onErrorId) {
       const back = sessionVars.previousBlock;
