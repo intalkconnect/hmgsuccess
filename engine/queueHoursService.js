@@ -1,40 +1,40 @@
 // engine/queueHoursService.js
+import { initDB, query } from '../services/db.js';
+
 let cache = new Map();
-let cacheTtlMs = 60_000; // 1 minuto
-let last = new Map();
-
-async function fromRepo(queueName) {
-  try {
-    const mod = await import('../server/db/queueBusinessHoursRepo.js'); // ajuste caminho se necessário
-    const { getQueueBH } = mod;
-    return await getQueueBH(queueName);
-  } catch {
-    return null;
-  }
-}
-
-async function fromHttp(queueName) {
-  try {
-    const base = process.env.INTERNAL_BASE_URL || 'http://localhost:3000/api';
-    const res = await fetch(`${base}/queues/${encodeURIComponent(queueName)}/business-hours`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+let ts = new Map();
+const TTL_MS = 60_000; // 1 min
 
 export async function loadQueueBH(queueName) {
   if (!queueName) return null;
+
   const now = Date.now();
-  if (cache.has(queueName) && now - (last.get(queueName) || 0) < cacheTtlMs) {
+  if (cache.has(queueName) && now - (ts.get(queueName) || 0) < TTL_MS) {
     return cache.get(queueName);
   }
-  const fromDb = await fromRepo(queueName);
-  const cfg = fromDb || await fromHttp(queueName);
-  if (cfg) {
-    cache.set(queueName, cfg);
-    last.set(queueName, now);
-  }
+
+  await initDB(); // garante pool
+
+  const sql = `
+    SELECT queue_name, timezone, hours, holidays, exceptions, pre_human, off_hours
+    FROM queue_business_hours
+    WHERE queue_name = $1
+  `;
+  const { rows } = await query(sql, [queueName]);
+  const row = rows[0] || null;
+
+  // Normaliza campos (evita undefined)
+  const cfg = row ? {
+    queue_name: row.queue_name,
+    timezone: row.timezone || 'America/Sao_Paulo',
+    hours: row.hours || {},
+    holidays: row.holidays || [],
+    exceptions: row.exceptions || {},
+    pre_human: row.pre_human || null,
+    off_hours: row.off_hours || null
+  } : null;
+
+  cache.set(queueName, cfg);
+  ts.set(queueName, now);
   return cfg;
 }
