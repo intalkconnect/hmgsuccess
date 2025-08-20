@@ -181,11 +181,31 @@ async function processTelegram(evt, { io } = {}) {
 /* ===================== Router ===================== */
 export async function processEvent(evt, { io } = {}) {
 
-    if (evt?.kind === SYSTEM_EVENT && evt?.event?.type === SYSTEM_EVT_TICKET_STATUS) {
-    await handleTicketStatusEvent(evt.event, { io });
+  // ✅ Evento de sistema: ticket fechado → marcar sessão e RETOMAR fluxo pelo ACTIVE FLOW do banco
+  if (evt?.kind === SYSTEM_EVENT && evt?.event?.type === SYSTEM_EVT_TICKET_STATUS) {
+    const result = await handleTicketStatusEvent(evt.event, { io });
+
+    if (result?.resume) {
+      const storageUserId = result.storageUserId || evt.event.userId;
+      const rawUserId = result.rawUserId || String(storageUserId || '').split('@')[0];
+
+      const flow = await getActiveFlow();      // ← seu padrão: pega o fluxo ativo do DB
+      const outgoing = await runFlow({
+        message: null,                         // retomar sem nova mensagem do usuário
+        flow,
+        vars: undefined,                       // mantém as vars salvas na sessão
+        rawUserId,
+        io
+      });
+
+      // (opcional) se quiser espelhar no front como nos outros casos:
+      if (outgoing?.user_id) {
+        await emitToRoom({ room: storageUserId, event: 'new_message', payload: outgoing });
+      }
+    }
     return 'ok';
   }
-  
+
   const ch = evt?.channel;
   if (!ch) return 'duplicate';
   if (ch === 'whatsapp') return processWhatsApp(evt, { io });
