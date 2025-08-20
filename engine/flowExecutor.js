@@ -290,6 +290,20 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       resolvedBlock = flow.blocks.onerror ? 'onerror' : null;
     }
 
+    // 🔒 Pausar se redirecionar para o START (somente quando vindo de outro bloco)
+const redirectingToStart =
+  resolvedBlock === flow.start && currentBlockId !== flow.start;
+
+if (redirectingToStart) {
+  // (Opcional) Limpar variáveis transitórias aqui, se fizer sentido:
+  // delete sessionVars.lastUserMessage;
+
+  // Salva a sessão no START e interrompe a automação
+  await saveSession(userId, flow.start, flow.id, sessionVars);
+  break; // <- para o loop; só retoma quando chegar nova mensagem
+}
+
+
     // 4.6) Atualiza previousBlock (anti-loop simples)
     if (
       currentBlockId !== 'onerror' &&
