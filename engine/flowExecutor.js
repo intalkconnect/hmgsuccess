@@ -9,6 +9,8 @@ import { sendMessageByChannel } from './messenger.js';
 import { distribuirTicket } from './ticketManager.js';
 import { CHANNELS } from './messageTypes.js';
 
+// --- Helpers ---------------------------------------------------------------
+
 // Resolve o ID do bloco onError tanto por chave especial quanto por label
 function resolveOnErrorId(flow) {
   if (flow?.blocks?.onerror) return 'onerror';
@@ -17,6 +19,71 @@ function resolveOnErrorId(flow) {
   );
   return entry ? entry[0] : null;
 }
+
+// Normaliza mensagem de entrada (texto/interactive/list/button → id/title/text)
+function parseInboundMessage(msg) {
+  const out = { text: null, id: null, title: null, type: null };
+  try {
+    if (typeof msg === 'string') {
+      out.text = msg.trim();
+      out.type = 'text';
+      return out;
+    }
+    if (!msg || typeof msg !== 'object') return out;
+
+    // alguns provedores aninham em msg.message
+    const m = (msg.message || msg);
+
+    out.type = m.type || msg.type || null;
+
+    // WhatsApp Cloud API - interactive (button)
+    if (m.interactive?.button_reply) {
+      out.id = m.interactive.button_reply.id ?? null;
+      out.title = m.interactive.button_reply.title ?? null;
+      out.type = 'interactive.button_reply';
+      return out;
+    }
+
+    // WhatsApp Cloud API - interactive (list)
+    if (m.interactive?.list_reply) {
+      out.id = m.interactive.list_reply.id ?? null;
+      out.title = m.interactive.list_reply.title ?? null;
+      out.type = 'interactive.list_reply';
+      return out;
+    }
+
+    // Outras variações comuns (fallbacks)
+    if (m.button?.payload || m.button?.text) {
+      out.id = m.button.payload ?? null;
+      out.title = m.button.text ?? null;
+      out.type = out.type || 'button';
+      return out;
+    }
+
+    if (m.postback?.payload) {
+      out.id = m.postback.payload;
+      out.type = out.type || 'postback';
+      return out;
+    }
+
+    if (m.text?.body) {
+      out.text = String(m.text.body).trim();
+      out.type = out.type || 'text';
+      return out;
+    }
+
+    if (m.body) {
+      out.text = String(m.body).trim();
+      out.type = out.type || 'text';
+      return out;
+    }
+  } catch {
+    // ignora erros de parsing; devolve out "vazio"
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------------
 
 /**
  * Executa um fluxo JSON de atendimento. Sempre envia mensagens via fila (worker-outgoing).
@@ -84,13 +151,26 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       if (storedBlock === 'despedida') {
         currentBlockId = flow.start;
         sessionVars = { ...sessionVars };
-        sessionVars.lastUserMessage = message;
+
+        // 🔎 normaliza mensagem recebida
+        const inbound = parseInboundMessage(message);
+        sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
+        sessionVars.lastReplyId = inbound.id ?? null;
+        sessionVars.lastReplyTitle = inbound.title ?? null;
+        sessionVars.lastMessageType = inbound.type ?? null;
+
       } else {
         const awaiting = flow.blocks[storedBlock];
 
         if (awaiting.actions && awaiting.actions.length > 0) {
           if (!message) return null; // aguardando resposta
-          sessionVars.lastUserMessage = message;
+
+          // 🔎 normaliza mensagem recebida
+          const inbound = parseInboundMessage(message);
+          sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
+          sessionVars.lastReplyId = inbound.id ?? null;
+          sessionVars.lastReplyTitle = inbound.title ?? null;
+          sessionVars.lastMessageType = inbound.type ?? null;
 
           let next = null;
           for (const action of awaiting.actions || []) {
@@ -110,8 +190,15 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         }
       }
     } else {
+      // Sem sessão: inicia no start
       currentBlockId = flow.start;
-      sessionVars.lastUserMessage = message;
+
+      // 🔎 normaliza mensagem inicial (se houver)
+      const inbound = parseInboundMessage(message);
+      sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
+      sessionVars.lastReplyId = inbound.id ?? null;
+      sessionVars.lastReplyTitle = inbound.title ?? null;
+      sessionVars.lastMessageType = inbound.type ?? null;
     }
   }
 
