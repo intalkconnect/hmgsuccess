@@ -6,6 +6,9 @@ import { processMediaIfNeeded } from './processFileHeavy.js';
 import { emitToRoom } from '../realtime/emitToRoom.js'; // <-- usa helper via HTTP /emit
 import { SYSTEM_EVENT, SYSTEM_EVT_TICKET_STATUS } from '../../engine/messageTypes.js';
 import { handleTicketStatusEvent } from './handleTicketStatusEvent.js';
+import { loadSession, saveSession } from '../../engine/sessionManager.js';
+import { determineNextBlock } from '../../engine/utils.js';
+
 
 function ensureMessageId(channel, rawIdParts) {
   const joined = rawIdParts.filter(Boolean).map(String).join(':');
@@ -179,6 +182,7 @@ async function processTelegram(evt, { io } = {}) {
 }
 
 /* ===================== Router ===================== */
+/* ===================== Router ===================== */
 export async function processEvent(evt, { io } = {}) {
 
   // ✅ Evento de sistema: ticket fechado → marcar sessão e RETOMAR fluxo pelo ACTIVE FLOW do banco
@@ -187,18 +191,50 @@ export async function processEvent(evt, { io } = {}) {
 
     if (result?.resume) {
       const storageUserId = result.storageUserId || evt.event.userId;
-      const rawUserId = result.rawUserId || String(storageUserId || '').split('@')[0];
+      const rawUserId     = result.rawUserId || String(storageUserId || '').split('@')[0];
 
-      const flow = await getActiveFlow();      // ← seu padrão: pega o fluxo ativo do DB
+      // 1) carrega o fluxo ativo do DB (seu padrão atual)
+      const flow = await getActiveFlow();
+
+      // 2) lê a sessão e calcula o próximo bloco a partir do bloco human de origem
+      const session = await loadSession(storageUserId);
+      const vars    = { ...(session?.vars || {}) };
+
+      const originId    = vars?.handover?.originBlock;       // precisa ser salvo quando entra no bloco human
+      const originBlock = originId ? flow?.blocks?.[originId] : null;
+
+      let nextFromHuman = null;
+      if (originBlock) {
+        nextFromHuman = determineNextBlock(originBlock, vars, flow, originId);
+      }
+
+      // Fallbacks se não tiver origin ou se o next não existir
+      if (!nextFromHuman || !flow?.blocks?.[nextFromHuman]) {
+        if (flow?.blocks?.onhumanreturn) nextFromHuman = 'onhumanreturn';
+        else if (flow?.blocks?.onerror)  nextFromHuman = 'onerror';
+        else                             nextFromHuman = flow?.start;
+      }
+
+      // 3) marca handover como “idle” e persiste a sessão JÁ fora do "human"
+      const updatedVars = {
+        ...vars,
+        handover: { ...(vars.handover || {}), status: 'idle', result: 'closed' },
+        previousBlock: originId || 'human',
+        // ticket.number já foi gravado no handleTicketStatusEvent
+      };
+
+      await saveSession(storageUserId, nextFromHuman, session?.flow_id, updatedVars);
+
+      // 4) agora roda o fluxo a partir do próximo bloco
       const outgoing = await runFlow({
-        message: null,                         // retomar sem nova mensagem do usuário
+        message: null,         // sem nova msg do usuário
         flow,
-        vars: undefined,                       // mantém as vars salvas na sessão
+        vars: undefined,       // usa as vars salvas na sessão
         rawUserId,
         io
       });
 
-      // (opcional) se quiser espelhar no front como nos outros casos:
+      // (opcional) espelhar no front como nos outros handlers
       if (outgoing?.user_id) {
         await emitToRoom({ room: storageUserId, event: 'new_message', payload: outgoing });
       }
@@ -212,3 +248,4 @@ export async function processEvent(evt, { io } = {}) {
   if (ch === 'telegram') return processTelegram(evt, { io });
   return 'ok';
 }
+
