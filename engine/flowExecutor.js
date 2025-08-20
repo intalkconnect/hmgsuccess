@@ -3,13 +3,15 @@ import axios from 'axios';
 import vm from 'vm';
 
 import { substituteVariables } from '../utils/vars.js';
-import { evaluateConditions, determineNextBlock } from './utils.js';
+import { evaluateConditions /*, determineNextBlock */ } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
 import { sendMessageByChannel } from './messenger.js';
 import { distribuirTicket } from './ticketManager.js';
 import { CHANNELS } from './messageTypes.js';
 
-// --- Helpers ---------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 
 // Resolve o ID do bloco onError tanto por chave especial quanto por label
 function resolveOnErrorId(flow) {
@@ -31,20 +33,17 @@ function parseInboundMessage(msg) {
     }
     if (!msg || typeof msg !== 'object') return out;
 
-    // alguns provedores aninham em msg.message
     const m = (msg.message || msg);
-
     out.type = m.type || msg.type || null;
 
-    // WhatsApp Cloud API - interactive (button)
+    // WhatsApp Cloud API - interactive (botão)
     if (m.interactive?.button_reply) {
       out.id = m.interactive.button_reply.id ?? null;
       out.title = m.interactive.button_reply.title ?? null;
       out.type = 'interactive.button_reply';
       return out;
     }
-
-    // WhatsApp Cloud API - interactive (list)
+    // WhatsApp Cloud API - interactive (lista)
     if (m.interactive?.list_reply) {
       out.id = m.interactive.list_reply.id ?? null;
       out.title = m.interactive.list_reply.title ?? null;
@@ -52,46 +51,111 @@ function parseInboundMessage(msg) {
       return out;
     }
 
-    // Outras variações comuns (fallbacks)
+    // Fallbacks comuns
     if (m.button?.payload || m.button?.text) {
       out.id = m.button.payload ?? null;
       out.title = m.button.text ?? null;
       out.type = out.type || 'button';
       return out;
     }
-
     if (m.postback?.payload) {
       out.id = m.postback.payload;
       out.type = out.type || 'postback';
       return out;
     }
-
     if (m.text?.body) {
       out.text = String(m.text.body).trim();
       out.type = out.type || 'text';
       return out;
     }
-
     if (m.body) {
       out.text = String(m.body).trim();
       out.type = out.type || 'text';
       return out;
     }
-  } catch {
-    // ignora erros de parsing; devolve out "vazio"
-  }
+  } catch { /* ignore */ }
   return out;
 }
 
-// --------------------------------------------------------------------------
+// Remove acentos, emojis/pontuação e baixa tudo
+function normalizeStr(v) {
+  if (v == null) return '';
+  let s = String(v);
+  try {
+    s = s.normalize('NFD').replace(/\p{Diacritic}/gu, ''); // acentos
+  } catch { /* ignore */ }
+  // remove emojis/pontuação, mantém letras/números e espaços únicos
+  s = s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
+  return s;
+}
 
 /**
- * Executa um fluxo JSON de atendimento. Sempre envia mensagens via fila (worker-outgoing).
- * - Se a sessão estiver em humano: não automatiza; apenas garante distribuição do ticket.
- *   (EXTRA: se o worker já marcou handover.status === 'closed', retoma pelas actions do bloco human.)
- * - Se o bloco atual for "human": salva estado, distribui e interrompe o fluxo.
- * - Para blocos que aguardam resposta (awaitResponse): interrompe o loop até próxima mensagem do usuário.
+ * Tenta validar um conjunto de condições contra várias “visões” da entrada
+ * - 1ª tentativa: vars como estão
+ * - 2ª: lastUserMessage ← lastReplyId
+ * - 3ª: lastUserMessage ← lastReplyTitle
+ * - 4ª: comparação normalizada (sem emoji/acentos, minúsculas)
  */
+function evalConditionsSmart(conditions = [], vars = {}) {
+  // 1) direto
+  if (evaluateConditions(conditions, vars)) return true;
+
+  // 2) substituir por id
+  if (vars.lastReplyId) {
+    const v2 = { ...vars, lastUserMessage: vars.lastReplyId };
+    if (evaluateConditions(conditions, v2)) return true;
+  }
+
+  // 3) substituir por title
+  if (vars.lastReplyTitle) {
+    const v3 = { ...vars, lastUserMessage: vars.lastReplyTitle };
+    if (evaluateConditions(conditions, v3)) return true;
+  }
+
+  // 4) versão normalizada (normaliza valor e variável)
+  const vNorm = {
+    ...vars,
+    lastUserMessage: normalizeStr(vars.lastUserMessage),
+    lastReplyId: normalizeStr(vars.lastReplyId),
+    lastReplyTitle: normalizeStr(vars.lastReplyTitle),
+  };
+  const cNorm = conditions.map((c) => {
+    if (!c) return c;
+    const type = c.type?.toLowerCase?.();
+    // normaliza apenas tipos de comparação textual
+    if (['equals', 'not_equals', 'contains', 'starts_with', 'ends_with'].includes(type)) {
+      return { ...c, value: normalizeStr(c.value) };
+    }
+    return c;
+  });
+  if (evaluateConditions(cNorm, vNorm)) return true;
+
+  return false;
+}
+
+/**
+ * Resolve o próximo bloco olhando as actions e o defaultNext do bloco.
+ * Usa evalConditionsSmart para suportar id/title/text e normalização.
+ */
+function determineNextSmart(block, vars, flow, currentId) {
+  // actions
+  for (const action of block?.actions || []) {
+    if (evalConditionsSmart(action.conditions || [], vars)) {
+      return action.next;
+    }
+  }
+  // defaultNext
+  if (block?.defaultNext && flow.blocks[block.defaultNext]) {
+    return block.defaultNext;
+  }
+  // sem saída
+  return null;
+}
+
+// -----------------------------------------------------------------------------
+// Executor
+// -----------------------------------------------------------------------------
+
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const userId = `${rawUserId}@w.msgcli.net`;
 
@@ -100,18 +164,16 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     return flow?.onError?.content || 'Erro interno no bot';
   }
 
-  // ✅ descobrir o onError logo no início
   const onErrorId = resolveOnErrorId(flow);
 
-  // 1) Carrega (ou inicializa) sessão e vars
+  // 1) Sessão e variáveis
   const session = await loadSession(userId);
   let sessionVars = { ...(vars || {}), ...(session?.vars || {}) };
-
   if (!sessionVars.channel) sessionVars.channel = CHANNELS.WHATSAPP;
 
   let currentBlockId = null;
 
-  // 2) Sessão em HUMANO
+  // 2) Se já está em HUMANO
   if (session?.current_block === 'human') {
     const sVars = { ...(session?.vars || {}) };
 
@@ -121,10 +183,9 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
       let nextFromHuman = null;
       if (originBlock) {
-        nextFromHuman = determineNextBlock(originBlock, sVars, flow, originId);
+        nextFromHuman = determineNextSmart(originBlock, sVars, flow, originId);
       }
 
-      // Fallbacks
       if (!nextFromHuman || !flow.blocks[nextFromHuman]) {
         if (flow.blocks?.onhumanreturn) nextFromHuman = 'onhumanreturn';
         else if (onErrorId)           nextFromHuman = onErrorId;
@@ -145,15 +206,13 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   // 3) Determina bloco inicial (retomada ou start)
   if (currentBlockId == null) {
+    const inbound = parseInboundMessage(message);
+
     if (session?.current_block && flow.blocks[session.current_block]) {
       const storedBlock = session.current_block;
 
       if (storedBlock === 'despedida') {
         currentBlockId = flow.start;
-        sessionVars = { ...sessionVars };
-
-        // 🔎 normaliza mensagem recebida
-        const inbound = parseInboundMessage(message);
         sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
         sessionVars.lastReplyId = inbound.id ?? null;
         sessionVars.lastReplyTitle = inbound.title ?? null;
@@ -165,23 +224,13 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         if (awaiting.actions && awaiting.actions.length > 0) {
           if (!message) return null; // aguardando resposta
 
-          // 🔎 normaliza mensagem recebida
-          const inbound = parseInboundMessage(message);
+          // popula variáveis de entrada (compat + campos novos)
           sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
           sessionVars.lastReplyId = inbound.id ?? null;
           sessionVars.lastReplyTitle = inbound.title ?? null;
           sessionVars.lastMessageType = inbound.type ?? null;
 
-          let next = null;
-          for (const action of awaiting.actions || []) {
-            if (evaluateConditions(action.conditions, sessionVars)) {
-              next = action.next;
-              break;
-            }
-          }
-          if (!next && awaiting.defaultNext && flow.blocks[awaiting.defaultNext]) {
-            next = awaiting.defaultNext;
-          }
+          let next = determineNextSmart(awaiting, sessionVars, flow, storedBlock);
           if (!next && onErrorId) next = onErrorId;
 
           currentBlockId = next || storedBlock;
@@ -193,8 +242,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       // Sem sessão: inicia no start
       currentBlockId = flow.start;
 
-      // 🔎 normaliza mensagem inicial (se houver)
-      const inbound = parseInboundMessage(message);
+      // popula variáveis também no primeiro contato
       sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
       sessionVars.lastReplyId = inbound.id ?? null;
       sessionVars.lastReplyTitle = inbound.title ?? null;
@@ -234,7 +282,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       return null;
     }
 
-    // 4.2) Monta conteúdo
+    // 4.2) Monta conteúdo (substituição de variáveis)
     let content = '';
     if (block.content != null) {
       try {
@@ -292,7 +340,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       console.error('[flowExecutor] Erro executando api_call/script:', e);
     }
 
-    // 4.4) Envio da mensagem
+    // 4.4) Envio da mensagem (sempre via fila)
     const sendableTypes = [
       'text', 'image', 'audio', 'video', 'file', 'document', 'location', 'interactive'
     ];
@@ -300,9 +348,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     if (content && sendableTypes.includes(block.type)) {
       if (block.sendDelayInSeconds) {
         const ms = Number(block.sendDelayInSeconds) * 1000;
-        if (!Number.isNaN(ms) && ms > 0) {
-          await new Promise(r => setTimeout(r, ms));
-        }
+        if (!Number.isNaN(ms) && ms > 0) await new Promise(r => setTimeout(r, ms));
       }
 
       try {
@@ -353,12 +399,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
     // 4.5) Decide próximo bloco
     let nextBlock;
-    if (currentBlockId === onErrorId) {
+    if (currentBlockId === resolveOnErrorId(flow)) {
       // Voltando do erro: tenta voltar para o anterior; se não houver, vai para o start
       const back = sessionVars.previousBlock;
       nextBlock = (back && flow.blocks[back]) ? back : flow.start;
     } else {
-      nextBlock = determineNextBlock(block, sessionVars, flow, currentBlockId);
+      nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
     }
 
     let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
@@ -369,6 +415,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     }
 
     // Se não existir no fluxo, cai para onError
+    const onErrorId = resolveOnErrorId(flow);
     if (resolvedBlock && !flow.blocks[resolvedBlock]) {
       resolvedBlock = onErrorId || null;
     }
@@ -391,7 +438,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       sessionVars.previousBlock = currentBlockId;
     }
 
-    // 4.7) Persiste sessão com o bloco resolvido
+    // 4.7) Persiste sessão
     await saveSession(userId, resolvedBlock, flow.id, sessionVars);
 
     // 4.8) Se o bloco aguarda resposta do usuário, interrompe o loop
