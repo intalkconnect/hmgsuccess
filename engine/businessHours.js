@@ -16,20 +16,36 @@ function partsInTz(date, timeZone) {
   return { dayKey, minutes, isoDate };
 }
 
+/**
+ * Retorna:
+ *  - { open: true,  reason: null }
+ *  - { open: false, reason: "holiday" }   -> data em holidays
+ *  - { open: false, reason: "closed" }    -> fora de qualquer janela
+ */
 export function isOpenNow(cfg, now = new Date()) {
-  if (!cfg || !cfg.timezone || !cfg.hours) return { open: true };
+  if (!cfg || !cfg.timezone) return { open: true, reason: null };
   const { dayKey, minutes, isoDate } = partsInTz(now, cfg.timezone);
 
+  // Feriado explícito fecha o dia todo
+  if (Array.isArray(cfg.holidays) && cfg.holidays.includes(isoDate)) {
+    return { open: false, reason: 'holiday' };
+  }
+
+  // Exceções (para a data exata) têm prioridade sobre hours
   const todays = (cfg.exceptions && cfg.exceptions[isoDate])
     ? cfg.exceptions[isoDate]
-    : (Array.isArray(cfg.holidays) && cfg.holidays.includes(isoDate) ? [] : (cfg.hours[dayKey] || []));
+    : (cfg.hours?.[dayKey] || []);
+
+  if (!todays || todays.length === 0) {
+    return { open: false, reason: 'closed' };
+  }
 
   const open = todays.some(w => {
-    const [sh, sm] = (w.start || '00:00').split(':').map(Number);
-    const [eh, em] = (w.end   || '23:59').split(':').map(Number);
+    const [sh, sm] = String(w.start || '00:00').split(':').map(Number);
+    const [eh, em] = String(w.end   || '23:59').split(':').map(Number);
     const a = sh*60+sm, b = eh*60+em;
     return minutes >= a && minutes <= b;
   });
 
-  return { open };
+  return { open, reason: open ? null : 'closed' };
 }
