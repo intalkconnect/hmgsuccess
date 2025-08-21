@@ -1,5 +1,5 @@
 // engine/queueHoursService.js
-import { initDB, pool } from '../services/db.js';
+import { initDB, pool } from './services/db.js';
 
 let cache = new Map();
 let ts = new Map();
