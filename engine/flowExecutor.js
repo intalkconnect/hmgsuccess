@@ -280,11 +280,15 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       currentBlockId = flow.start;
       console.log('🚀 Starting new session from flow start');
       
-      // Inicializa variáveis para o bloco início
-      sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? 'init';
-      sessionVars.lastReplyId = inbound.id ?? null;
-      sessionVars.lastReplyTitle = inbound.title ?? null;
-      sessionVars.lastMessageType = inbound.type ?? 'init';
+ // Inicializa variáveis apenas se houver mensagem real do usuário
+ const hasInbound =
+   !!(inbound && (inbound.title || inbound.text || inbound.id));
+ sessionVars.lastUserMessage = hasInbound
+   ? (inbound.title ?? inbound.text ?? inbound.id)
+   : '';
+ sessionVars.lastReplyId = hasInbound ? (inbound.id ?? null) : null;
+ sessionVars.lastReplyTitle = hasInbound ? (inbound.title ?? null) : null;
+ sessionVars.lastMessageType = hasInbound ? inbound.type : 'init';
     }
   }
 
