@@ -136,14 +136,27 @@ function evalConditionsSmart(conditions = [], vars = {}) {
 }
 
 function determineNextSmart(block, vars, flow, currentId) {
+  // Tenta encontrar pela lógica de condições
   for (const action of block?.actions || []) {
     if (evalConditionsSmart(action.conditions || [], vars)) {
       return action.next;
     }
   }
+  
+  // Se não encontrou pelas condições, usa defaultNext
   if (block?.defaultNext && flow.blocks[block.defaultNext]) {
     return block.defaultNext;
   }
+  
+  // Se ainda não encontrou, procura por blocos comuns
+  if (!block.defaultNext) {
+    // Tenta encontrar o bloco "Boas Vindas" ou similar
+    const welcomeBlock = Object.entries(flow.blocks).find(
+      ([, b]) => b.label === 'Boas Vindas' || b.label === 'início'
+    );
+    if (welcomeBlock) return welcomeBlock[0];
+  }
+  
   return null;
 }
 
@@ -180,6 +193,24 @@ function resolveByIdOrLabel(flow, key) {
   return found ? found[0] : null;
 }
 
+function debugBlockTransitions(block, vars) {
+  console.log('🔍 Debugging block transitions for:', block.label || block.id);
+  console.log('📊 Variables:', vars);
+  
+  if (block.actions && block.actions.length > 0) {
+    console.log('🔄 Available actions:');
+    block.actions.forEach((action, index) => {
+      console.log(`   ${index}:`, {
+        next: action.next,
+        conditions: action.conditions,
+        evalResult: evalConditionsSmart(action.conditions || [], vars)
+      });
+    });
+  }
+  
+  console.log('⚙️ Default next:', block.defaultNext);
+}
+
 /* --------------------------- executor --------------------------- */
 
 export async function runFlow({ message, flow, vars, rawUserId, io }) {
@@ -208,6 +239,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   // Parse da mensagem de entrada
   const inbound = parseInboundMessage(message);
   console.log('🧠 Parsed message:', inbound);
+
+  // Atualiza variáveis com a mensagem recebida
+  sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
+  sessionVars.lastReplyId = inbound.id ?? null;
+  sessionVars.lastReplyTitle = inbound.title ?? null;
+  sessionVars.lastMessageType = inbound.type ?? null;
 
   // sessão já em humano?
   if (session?.current_block === 'human') {
@@ -260,12 +297,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
             return null;
           }
 
-          // Atualiza variáveis com a mensagem recebida
-          sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
-          sessionVars.lastReplyId = inbound.id ?? null;
-          sessionVars.lastReplyTitle = inbound.title ?? null;
-          sessionVars.lastMessageType = inbound.type ?? null;
-
           let next = determineNextSmart(awaiting, sessionVars, flow, stored);
           console.log('➡️ Next block from actions:', next);
           
@@ -279,12 +310,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       // Nova sessão - começa do início
       currentBlockId = flow.start;
       console.log('🚀 Starting new session from flow start');
-      
-      // Inicializa variáveis para o bloco início
-      sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? 'init';
-      sessionVars.lastReplyId = inbound.id ?? null;
-      sessionVars.lastReplyTitle = inbound.title ?? null;
-      sessionVars.lastMessageType = inbound.type ?? 'init';
     }
   }
 
@@ -296,10 +321,37 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     const block = flow.blocks[currentBlockId];
     if (!block) {
       console.error('❌ Block not found:', currentBlockId);
+      if (onErrorId && flow.blocks[onErrorId]) {
+        currentBlockId = onErrorId;
+        continue;
+      }
       break;
     }
 
     console.log('🏃‍♂️ Processing block:', block.label || block.id, 'type:', block.type);
+    
+    // Debug das transições do bloco
+    debugBlockTransitions(block, sessionVars);
+
+    // CORREÇÃO: Se o bloco atual for o início e estiver vazio, pula para o próximo
+    if (currentBlockId === flow.start && (!block.content || block.content === '')) {
+      console.log('⏭️ Skipping empty start block');
+      let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
+      if (!nextBlock && block.defaultNext) {
+        nextBlock = block.defaultNext;
+      }
+      
+      // Se ainda não encontrou próximo, procura pelo bloco de boas-vindas
+      if (!nextBlock) {
+        const welcomeBlock = Object.entries(flow.blocks).find(
+          ([, b]) => b.label === 'Boas Vindas'
+        );
+        if (welcomeBlock) nextBlock = welcomeBlock[0];
+      }
+      
+      currentBlockId = nextBlock;
+      continue;
+    }
 
     /* ---------- HUMAN + horários por fila ---------- */
     if (block.type === 'human') {
@@ -512,6 +564,8 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           console.error('❌ Falha ao enviar fallback de texto:', fallbackErr);
         }
       }
+    } else if (block.type === 'text' && (!content || content === '')) {
+      console.log('⏭️ Skipping empty text block');
     }
 
     /* ---------- Próximo ---------- */
@@ -523,6 +577,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     } else {
       nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
       console.log('➡️ Next block determined:', nextBlock);
+      
+      // CORREÇÃO: Se não encontrou próximo pelas ações, usa defaultNext
+      if (!nextBlock && block.defaultNext) {
+        nextBlock = block.defaultNext;
+        console.log('➡️ Using defaultNext:', nextBlock);
+      }
     }
 
     let resolvedBlock = block.awaitResponse ? currentBlockId : nextBlock;
