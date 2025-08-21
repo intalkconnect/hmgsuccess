@@ -24,33 +24,33 @@ function resolveOnErrorId(flow) {
 
 function parseInboundMessage(msg) {
   const out = { text: null, id: null, title: null, type: null };
-  
+
   try {
-    // Para estrutura WhatsApp Business API
+    // Meta WhatsApp Business API (webhook oficial)
     if (msg?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
       const message = msg.entry[0].changes[0].value.messages[0];
       return parseWhatsAppMessage(message);
     }
-    
-    // Para webhook do WhatsApp
+
+    // Outras libs que já extraem "messages"
     if (msg?.messages?.[0]) {
       return parseWhatsAppMessage(msg.messages[0]);
     }
-    
-    // Para mensagens diretas (testing)
+
+    // Mensagem direta (tests)
     if (typeof msg === 'string') {
       out.text = msg.trim();
       out.type = 'text';
       return out;
     }
-    
+
     // Estrutura alternativa
     if (msg?.message) {
       return parseWhatsAppMessage(msg.message);
     }
-    
+
     return parseWhatsAppMessage(msg);
-    
+
   } catch (error) {
     console.error('Error parsing message:', error);
     return out;
@@ -59,43 +59,42 @@ function parseInboundMessage(msg) {
 
 function parseWhatsAppMessage(message) {
   const out = { text: null, id: null, title: null, type: null };
-  
+
   if (!message) return out;
-  
+
   out.type = message.type || 'text';
-  
+
   switch (message.type) {
     case 'text':
       out.text = message.text?.body?.trim() || '';
       break;
-      
+
     case 'interactive':
       if (message.interactive?.button_reply) {
         out.id = message.interactive.button_reply.id;
         out.title = message.interactive.button_reply.title;
-        out.text = message.interactive.button_reply.title; // Para compatibilidade
+        out.text = message.interactive.button_reply.title; // compat
       } else if (message.interactive?.list_reply) {
         out.id = message.interactive.list_reply.id;
         out.title = message.interactive.list_reply.title;
-        out.text = message.interactive.list_reply.title; // Para compatibilidade
+        out.text = message.interactive.list_reply.title; // compat
       }
       break;
-      
+
     case 'button':
       out.id = message.button?.payload;
       out.title = message.button?.text;
-      out.text = message.button?.text; // Para compatibilidade
+      out.text = message.button?.text; // compat
       break;
-      
+
     default:
-      // Para outros tipos de mensagem, tenta extrair texto
       if (message.text?.body) {
         out.text = message.text.body.trim();
       } else if (message.body) {
         out.text = message.body.trim();
       }
   }
-  
+
   return out;
 }
 
@@ -106,6 +105,47 @@ function normalizeStr(v) {
   return s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+/**
+ * Constrói mapa id<->title do bloco interativo atual (list ou button).
+ * Usado para preencher/validar respostas, sem alterar o flow.
+ */
+function buildInteractiveAliases(block) {
+  const out = { id2title: {}, title2id: {} };
+  const c = block?.content;
+  if (!c) return out;
+
+  // List menu
+  if (c.type === 'list') {
+    for (const section of c.action?.sections || []) {
+      for (const row of section.rows || []) {
+        if (!row?.id || !row?.title) continue;
+        out.id2title[row.id] = row.title;
+        out.title2id[normalizeStr(row.title)] = row.id;
+      }
+    }
+  }
+
+  // Button menu
+  if (c.type === 'button') {
+    for (const b of c.action?.buttons || []) {
+      const id = b?.reply?.id;
+      const title = b?.reply?.title;
+      if (!id || !title) continue;
+      out.id2title[id] = title;
+      out.title2id[normalizeStr(title)] = id;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Avaliação inteligente de condições:
+ * - Tenta direto com vars.
+ * - Se falhar, tenta com lastReplyId e lastReplyTitle como lastUserMessage.
+ * - Se ainda falhar, constrói um pool de candidatos (id/title/alias normalizados)
+ *   e reavalia contra cada candidato.
+ */
 function evalConditionsSmart(conditions = [], vars = {}) {
   if (evaluateConditions(conditions, vars)) return true;
 
@@ -118,13 +158,14 @@ function evalConditionsSmart(conditions = [], vars = {}) {
     if (evaluateConditions(conditions, v3)) return true;
   }
 
+  // Normalização básica
   const vNorm = {
     ...vars,
     lastUserMessage: normalizeStr(vars.lastUserMessage),
     lastReplyId: normalizeStr(vars.lastReplyId),
     lastReplyTitle: normalizeStr(vars.lastReplyTitle),
   };
-  const cNorm = conditions.map((c) => {
+  const cNorm = (conditions || []).map((c) => {
     if (!c) return c;
     const type = c.type?.toLowerCase?.();
     if (['equals','not_equals','contains','starts_with','ends_with'].includes(type)) {
@@ -132,7 +173,32 @@ function evalConditionsSmart(conditions = [], vars = {}) {
     }
     return c;
   });
-  return evaluateConditions(cNorm, vNorm);
+  if (evaluateConditions(cNorm, vNorm)) return true;
+
+  // Pool de candidatos (id/title e aliases)
+  const poolRaw = Array.isArray(vars._candidates) ? vars._candidates : [];
+  const pool = Array.from(new Set(
+    [
+      vars.lastUserMessage,
+      vars.lastReplyTitle,
+      vars.lastReplyId,
+      ...poolRaw
+    ].filter(Boolean).map(normalizeStr)
+  ));
+
+  if (pool.length) {
+    for (const candidate of pool) {
+      const v = {
+        ...vars,
+        lastUserMessage: candidate,
+        lastReplyId: normalizeStr(vars.lastReplyId),
+        lastReplyTitle: normalizeStr(vars.lastReplyTitle),
+      };
+      if (evaluateConditions(cNorm, v)) return true;
+    }
+  }
+
+  return false;
 }
 
 function determineNextSmart(block, vars, flow, currentId) {
@@ -205,11 +271,11 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
   let currentBlockId = null;
 
-  // Parse da mensagem de entrada
+  // Parse inbound
   const inbound = parseInboundMessage(message);
   console.log('🧠 Parsed message:', inbound);
 
-  // sessão já em humano?
+  // Se já está em humano
   if (session?.current_block === 'human') {
     console.log('🤖 Session is in human mode');
     const sVars = { ...(session?.vars || {}) };
@@ -239,36 +305,63 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     }
   }
 
-  // inicial: parse e retomada/start
+  // inicial / retomada
   if (currentBlockId == null) {
     console.log('🔄 Determining starting block');
 
     if (session?.current_block && flow.blocks[session.current_block]) {
       const stored = session.current_block;
       console.log('📦 Resuming from stored block:', stored);
-      
+
       if (stored === 'despedida') {
         currentBlockId = flow.start;
         console.log('🔄 Restarting flow from start (despedida)');
       } else {
         const awaiting = flow.blocks[stored];
         console.log('⏳ Block awaiting response:', awaiting?.label);
-        
+
         if (awaiting.actions && awaiting.actions.length > 0) {
           if (!message && stored !== flow.start) {
             console.log('🚫 No message, staying on current block');
             return null;
           }
 
-          // Atualiza variáveis com a mensagem recebida
-          sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
-          sessionVars.lastReplyId = inbound.id ?? null;
-          sessionVars.lastReplyTitle = inbound.title ?? null;
-          sessionVars.lastMessageType = inbound.type ?? null;
+          // Atualiza variáveis com a mensagem recebida (sem 'init' fake)
+          const hasInbound =
+            !!(inbound && (inbound.title || inbound.text || inbound.id));
+          sessionVars.lastUserMessage = hasInbound
+            ? (inbound.title ?? inbound.text ?? inbound.id ?? '')
+            : (sessionVars.lastUserMessage ?? '');
+          sessionVars.lastReplyId = hasInbound ? (inbound.id ?? null) : (sessionVars.lastReplyId ?? null);
+          sessionVars.lastReplyTitle = hasInbound ? (inbound.title ?? null) : (sessionVars.lastReplyTitle ?? null);
+          sessionVars.lastMessageType = hasInbound ? inbound.type : (sessionVars.lastMessageType ?? 'init');
+
+          // Se o bloco aguardando é interativo, construir aliases e pool
+          if (awaiting?.type === 'interactive') {
+            const aliases = buildInteractiveAliases(awaiting);
+
+            if (sessionVars.lastReplyId && !sessionVars.lastReplyTitle) {
+              sessionVars.lastReplyTitle =
+                aliases.id2title[sessionVars.lastReplyId] || sessionVars.lastReplyTitle;
+            }
+            if (sessionVars.lastReplyTitle && !sessionVars.lastReplyId) {
+              const id = aliases.title2id[normalizeStr(sessionVars.lastReplyTitle)];
+              sessionVars.lastReplyId = id || sessionVars.lastReplyId;
+            }
+
+            // Pool de candidatos
+            sessionVars._candidates = Array.from(new Set([
+              sessionVars.lastUserMessage,
+              sessionVars.lastReplyTitle,
+              sessionVars.lastReplyId,
+              aliases.id2title[sessionVars.lastReplyId],
+              aliases.title2id[normalizeStr(sessionVars.lastReplyTitle)]
+            ].filter(Boolean)));
+          }
 
           let next = determineNextSmart(awaiting, sessionVars, flow, stored);
           console.log('➡️ Next block from actions:', next);
-          
+
           if (!next && onErrorId) next = onErrorId;
           currentBlockId = next || stored;
         } else {
@@ -279,16 +372,16 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       // Nova sessão - começa do início
       currentBlockId = flow.start;
       console.log('🚀 Starting new session from flow start');
-      
- // Inicializa variáveis apenas se houver mensagem real do usuário
- const hasInbound =
-   !!(inbound && (inbound.title || inbound.text || inbound.id));
- sessionVars.lastUserMessage = hasInbound
-   ? (inbound.title ?? inbound.text ?? inbound.id)
-   : '';
- sessionVars.lastReplyId = hasInbound ? (inbound.id ?? null) : null;
- sessionVars.lastReplyTitle = hasInbound ? (inbound.title ?? null) : null;
- sessionVars.lastMessageType = hasInbound ? inbound.type : 'init';
+
+      // Inicializa variáveis só se houver mensagem real do usuário
+      const hasInbound =
+        !!(inbound && (inbound.title || inbound.text || inbound.id));
+      sessionVars.lastUserMessage = hasInbound
+        ? (inbound.title ?? inbound.text ?? inbound.id)
+        : '';
+      sessionVars.lastReplyId = hasInbound ? (inbound.id ?? null) : null;
+      sessionVars.lastReplyTitle = hasInbound ? (inbound.title ?? null) : null;
+      sessionVars.lastMessageType = hasInbound ? inbound.type : 'init';
     }
   }
 
@@ -308,7 +401,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     /* ---------- HUMAN + horários por fila ---------- */
     if (block.type === 'human') {
       console.log('👥 Human handover block detected');
-      
+
       if (block.content?.queueName) {
         sessionVars.fila = block.content.queueName;
         console.log(`🧭 Queue set to: ${sessionVars.fila}`);
@@ -327,7 +420,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
       if (!open) {
         console.log('🚫 Outside business hours');
-        
+
         const msgCfg =
           (reason === 'holiday' && bhCfg?.off_hours?.holiday) ? bhCfg.off_hours.holiday :
           (reason === 'closed'  && bhCfg?.off_hours?.closed ) ? bhCfg.off_hours.closed  :
@@ -369,7 +462,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
       const preEnabled = bhCfg?.pre_human?.enabled !== false;
       const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
-      
+
       if (preEnabled && !preAlreadySent) {
         console.log('📤 Sending pre-human message');
         if (bhCfg?.pre_human) {
@@ -399,8 +492,8 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       console.log('💾 Saving human session');
       await saveSession(userId, 'human', flow.id, sessionVars);
 
-      try { 
-        await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); 
+      try {
+        await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
         console.log('✅ Ticket distributed successfully');
       } catch (e) {
         console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
@@ -472,7 +565,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
     if (content && sendableTypes.includes(block.type)) {
       console.log('📤 Sending message of type:', block.type);
-      
+
       if (block.sendDelayInSeconds) {
         const ms = Number(block.sendDelayInSeconds) * 1000;
         if (!Number.isNaN(ms) && ms > 0) {
@@ -480,7 +573,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           await new Promise(r => setTimeout(r, ms));
         }
       }
-      
+
       try {
         const messageContent = (typeof content === 'string') ? { text: content } : content;
         const pendingRecord = await sendMessageByChannel(
@@ -489,7 +582,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         );
         lastResponse = pendingRecord;
         console.log('✅ Message sent successfully');
-        
+
         if (io && pendingRecord) {
           try { io.emit('new_message', pendingRecord); } catch {}
           try { io.to(`chat-${userId}`).emit('new_message', pendingRecord); } catch {}
