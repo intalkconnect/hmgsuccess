@@ -31,7 +31,6 @@ function parseInboundMessage(msg) {
       return out;
     }
     if (!msg || typeof msg !== 'object') return out;
-
     const m = (msg.message || msg);
     out.type = m.type || msg.type || null;
 
@@ -127,20 +126,14 @@ async function sendConfiguredMessage(entry, { channel, userId, io }) {
     if (!Number.isNaN(ms) && ms > 0) await new Promise(r => setTimeout(r, ms));
   }
   const type = entry.type || 'text';
-  const rawContent =
+  const content =
     typeof entry.message === 'string'
       ? { text: entry.message }
       : (entry.payload || entry.content || null);
-  if (!rawContent) return null;
-
-  // wrap para interactive
-  const payload =
-    type === 'interactive' && rawContent && typeof rawContent === 'object' && rawContent.type
-      ? { interactive: rawContent }
-      : rawContent;
+  if (!content) return null;
 
   try {
-    const rec = await sendMessageByChannel(channel, userId, type, payload);
+    const rec = await sendMessageByChannel(channel, userId, type, content);
     if (io && rec) {
       try { io.emit('new_message', rec); } catch {}
       try { io.to(`chat-${userId}`).emit('new_message', rec); } catch {}
@@ -209,29 +202,30 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
 
     if (session?.current_block && flow.blocks[session.current_block]) {
       const stored = session.current_block;
-
       if (stored === 'despedida') {
         currentBlockId = flow.start;
-
       } else {
         const awaiting = flow.blocks[stored];
+if (awaiting.actions && awaiting.actions.length > 0) {
+  if (!message && stored !== flow.start) return null;
 
-        if (awaiting.actions && awaiting.actions.length > 0) {
-          // ⚠️ não retornar mais cedo: se não veio message, deixamos o loop enviar o bloco atual
-          if (!message) {
-            currentBlockId = stored;
-          } else {
-            const varsForDecision = {
-              ...sessionVars,
-              lastUserMessage: inbound.title ?? inbound.text ?? inbound.id ?? '',
-              lastReplyId: inbound.id ?? null,
-              lastReplyTitle: inbound.title ?? null,
-              lastMessageType: inbound.type ?? null
-            };
-            let next = determineNextSmart(awaiting, varsForDecision, flow, stored);
-            if (!next && onErrorId) next = onErrorId;
-            currentBlockId = next || stored;
-          }
+  // Popula variáveis mesmo sem message se for o início
+  if (!message && stored === flow.start) {
+    sessionVars.lastUserMessage = 'init';
+    sessionVars.lastReplyId = null;
+    sessionVars.lastReplyTitle = null;
+    sessionVars.lastMessageType = 'init';
+  }
+
+          let next = determineNextSmart(awaiting, {
+            ...sessionVars,
+            lastUserMessage: inbound.title ?? inbound.text ?? inbound.id ?? '',
+            lastReplyId: inbound.id ?? null,
+            lastReplyTitle: inbound.title ?? null,
+            lastMessageType: inbound.type ?? null
+          }, flow, stored);
+          if (!next && onErrorId) next = onErrorId;
+          currentBlockId = next || stored;
         } else {
           currentBlockId = stored;
         }
@@ -240,7 +234,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       currentBlockId = flow.start;
     }
 
-    // popula variáveis de contexto
     sessionVars.lastUserMessage = inbound.title ?? inbound.text ?? inbound.id ?? '';
     sessionVars.lastReplyId = inbound.id ?? null;
     sessionVars.lastReplyTitle = inbound.title ?? null;
@@ -253,93 +246,96 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     const block = flow.blocks[currentBlockId];
     if (!block) break;
 
-    /* ---------- HUMAN + horários por fila (diferenciando feriado x fechado) ---------- */
-    if (block.type === 'human') {
-      if (block.content?.queueName) {
-        sessionVars.fila = block.content.queueName;
-        console.log(`[🧭 fila do bloco: ${sessionVars.fila}]`);
-      }
+ /* ---------- HUMAN + horários por fila (diferenciando feriado x fechado) ---------- */
+if (block.type === 'human') {
+  if (block.content?.queueName) {
+    sessionVars.fila = block.content.queueName;
+    console.log(`[🧭 fila do bloco: ${sessionVars.fila}]`);
+  }
 
-      const bhCfg = await loadQueueBH(sessionVars.fila);
-      const { open, reason } = bhCfg ? isOpenNow(bhCfg) : { open: true, reason: null };
+  const bhCfg = await loadQueueBH(sessionVars.fila);
+  const { open, reason } = bhCfg ? isOpenNow(bhCfg) : { open: true, reason: null };
 
-      // variáveis p/ condições no builder
-      sessionVars.offhours = !open;
-      sessionVars.offhours_reason = reason;       // "holiday" | "closed" | null
-      sessionVars.isHoliday = reason === 'holiday';
-      sessionVars.offhours_queue = sessionVars.fila || null;
+  // popula variáveis p/ condições no builder
+  sessionVars.offhours = !open;
+  sessionVars.offhours_reason = reason;       // "holiday" | "closed" | null
+  sessionVars.isHoliday = reason === 'holiday';
+  sessionVars.offhours_queue = sessionVars.fila || null;
 
-      if (!open) {
-        // mensagem off-hours
-        const msgCfg =
-          (reason === 'holiday' && bhCfg?.off_hours?.holiday) ? bhCfg.off_hours.holiday :
-          (reason === 'closed'  && bhCfg?.off_hours?.closed ) ? bhCfg.off_hours.closed  :
-          bhCfg?.off_hours || null;
+  if (!open) {
+    // Escolhe mensagem por motivo (com fallback para formato antigo)
+    const msgCfg =
+      (reason === 'holiday' && bhCfg?.off_hours?.holiday) ? bhCfg.off_hours.holiday :
+      (reason === 'closed'  && bhCfg?.off_hours?.closed ) ? bhCfg.off_hours.closed  :
+      bhCfg?.off_hours || null;
 
-        if (msgCfg) {
-          await sendConfiguredMessage(msgCfg, {
-            channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
-          });
-        }
-
-        // próximo bloco configurado (por motivo)
-        let cfgNext = null;
-        if (reason === 'holiday') {
-          cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextHoliday ?? bhCfg?.off_hours?.next ?? null;
-        } else {
-          cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextClosed  ?? bhCfg?.off_hours?.next ?? null;
-        }
-
-        // 1) actions do bloco
-        let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
-        // 2) configuração do banco (id ou label)
-        if (!nextBlock && cfgNext) nextBlock = resolveByIdOrLabel(flow, cfgNext);
-        // 3) fallbacks
-        if (!nextBlock) nextBlock = flow.blocks?.offhours ? 'offhours' : resolveOnErrorId(flow);
-        nextBlock = nextBlock || currentBlockId;
-
-        await saveSession(userId, nextBlock, flow.id, sessionVars);
-        currentBlockId = nextBlock;
-        continue; // não abre handover quando fechado
-      }
-
-      // aberto: mensagem pré-humano apenas uma vez
-      const bhCfg = await loadQueueBH(sessionVars.fila);
-      const preEnabled = bhCfg?.pre_human?.enabled !== false;
-      const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
-      if (preEnabled && !preAlreadySent) {
-        if (bhCfg?.pre_human) {
-          await sendConfiguredMessage(bhCfg.pre_human, {
-            channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
-          });
-        } else if (block.content?.transferMessage) {
-          await sendConfiguredMessage(
-            { type: 'text', message: block.content.transferMessage },
-            { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
-          );
-        }
-      }
-
-      sessionVars.handover = {
-        ...(sessionVars.handover || {}),
-        status: 'open',
-        originBlock: currentBlockId,
-        preMsgSent: true
-      };
-      sessionVars.previousBlock = currentBlockId;
-      sessionVars.offhours = false;
-      sessionVars.offhours_reason = null;
-      sessionVars.isHoliday = false;
-
-      await saveSession(userId, 'human', flow.id, sessionVars);
-
-      try { await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); } catch (e) {
-        console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
-      }
-      return null;
+    if (msgCfg) {
+      await sendConfiguredMessage(msgCfg, {
+        channel: sessionVars.channel || CHANNELS.WHATSAPP,
+        userId, io
+      });
     }
+
+    // Descobre "next" por motivo (ordem de precedência + compat)
+    let cfgNext = null;
+    if (reason === 'holiday') {
+      cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextHoliday ?? bhCfg?.off_hours?.next ?? null;
+    } else {
+      cfgNext = msgCfg?.next ?? bhCfg?.off_hours?.nextClosed  ?? bhCfg?.off_hours?.next ?? null;
+    }
+
+    // 1º: respeita actions do bloco (ex.: offhours == true e/ou offhours_reason == "holiday")
+    let nextBlock = determineNextSmart(block, sessionVars, flow, currentBlockId);
+
+    // 2º: se não veio das actions, usa o configurado no banco (id ou label)
+    if (!nextBlock && cfgNext) {
+      nextBlock = resolveByIdOrLabel(flow, cfgNext);
+    }
+
+    // 3º: fallbacks finais
+    if (!nextBlock) nextBlock = flow.blocks?.offhours ? 'offhours' : resolveOnErrorId(flow);
+    nextBlock = nextBlock || currentBlockId;
+
+    await saveSession(userId, nextBlock, flow.id, sessionVars);
+    currentBlockId = nextBlock;
+    continue; // NÃO abre handover quando fechado
+  }
+
+  // ⚡️ aberto: envia pre-human uma única vez
+  const preEnabled = bhCfg?.pre_human?.enabled !== false;
+  const preAlreadySent = !!(sessionVars.handover?.preMsgSent);
+  if (preEnabled && !preAlreadySent) {
+    if (bhCfg?.pre_human) {
+      await sendConfiguredMessage(bhCfg.pre_human, {
+        channel: sessionVars.channel || CHANNELS.WHATSAPP,
+        userId, io
+      });
+    } else if (block.content?.transferMessage) {
+      await sendConfiguredMessage(
+        { type: 'text', message: block.content.transferMessage },
+        { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
+      );
+    }
+  }
+
+  sessionVars.handover = {
+    ...(sessionVars.handover || {}),
+    status: 'open',
+    originBlock: currentBlockId,
+    preMsgSent: true
+  };
+  sessionVars.previousBlock = currentBlockId;
+  sessionVars.offhours = false;
+  sessionVars.offhours_reason = null;
+  sessionVars.isHoliday = false;
+
+  await saveSession(userId, 'human', flow.id, sessionVars);
+
+  try { await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel); } catch (e) {
+    console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
+  }
+  return null;
+}
 
     /* ---------- Conteúdo / API / Script ---------- */
     let content = '';
@@ -405,12 +401,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         if (!Number.isNaN(ms) && ms > 0) await new Promise(r => setTimeout(r, ms));
       }
       try {
-        // wrap para interactive
-        const messageContent =
-          block.type === 'interactive' && content && typeof content === 'object' && content.type
-            ? { interactive: content }
-            : (typeof content === 'string' ? { text: content } : content);
-
+        const messageContent = (typeof content === 'string') ? { text: content } : content;
         const pendingRecord = await sendMessageByChannel(
           sessionVars.channel || CHANNELS.WHATSAPP,
           userId, block.type, messageContent
