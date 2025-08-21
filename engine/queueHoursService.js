@@ -1,5 +1,5 @@
 // engine/queueHoursService.js
-import { initDB, query } from '../services/db.js';
+import { initDB, pool } from '../services/db.js';
 
 let cache = new Map();
 let ts = new Map();
@@ -20,7 +20,7 @@ export async function loadQueueBH(queueName) {
     FROM queue_business_hours
     WHERE queue_name = $1
   `;
-  const { rows } = await query(sql, [queueName]);
+  const { rows } = await pool.query(sql, [queueName]);
   const row = rows[0] || null;
 
   // Normaliza campos (evita undefined)
