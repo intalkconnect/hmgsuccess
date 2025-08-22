@@ -34,7 +34,7 @@ export function buildProtocol(vars = {}) {
   const ticketDigits = String(rawTicket).replace(/\D+/g, '');
   const suffix = ticketDigits || '0000'; // fallback
 
-  return `PRT-${yyyy}${mm}${dd}-${hh}${mi}-${suffix}`;
+  return `${yyyy}${mm}${dd}${hh}${mi}${suffix}`;
 }
 
 /* --------------------------- Parsing de mensagens --------------------------- */
