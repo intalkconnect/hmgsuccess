@@ -8,6 +8,7 @@ import { distribuirTicket } from './ticketManager.js';
 import { CHANNELS } from './messageTypes.js';
 import { isOpenNow } from './businessHours.js';
 import { loadQueueBH } from './queueHoursService.js';
+import { sendMessageByChannel } from './messenger.js';
 
 // helpers centralizados
 import {
@@ -18,6 +19,7 @@ import {
   sendConfiguredMessage,
   resolveByIdOrLabel,
   buildProtocol,
+  normalizeStr,           // ← ADICIONE AQUI
 } from './helpers.js';
 
 /* --------------------------- executor --------------------------- */
