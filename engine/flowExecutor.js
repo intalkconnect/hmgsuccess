@@ -40,6 +40,14 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   let sessionVars = { ...(vars || {}), ...(session?.vars || {}) };
   if (!sessionVars.channel) sessionVars.channel = CHANNELS.WHATSAPP;
 
+    // ✅ userId com domínio disponível no fluxo ({{userId}})
+  if (!sessionVars.userId || !sessionVars.userId.includes('@')) {
+    sessionVars.userId = userId;
+  }
+
+  // (opcional) manter o cru para chamadas HTTP internas, se quiser
+  if (!sessionVars.userIdRaw) sessionVars.userIdRaw = rawUserId;
+
   // ✅ garante que exista um protocol logo de cara
   if (!sessionVars.protocol) {
     sessionVars.protocol = buildProtocol(sessionVars);
