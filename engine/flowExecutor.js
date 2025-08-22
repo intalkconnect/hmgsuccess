@@ -3,248 +3,22 @@ import axios from 'axios';
 import vm from 'vm';
 
 import { substituteVariables } from '../utils/vars.js';
-import { evaluateConditions } from './utils.js';
 import { loadSession, saveSession } from './sessionManager.js';
-import { sendMessageByChannel } from './messenger.js';
 import { distribuirTicket } from './ticketManager.js';
 import { CHANNELS } from './messageTypes.js';
-
 import { isOpenNow } from './businessHours.js';
 import { loadQueueBH } from './queueHoursService.js';
 
-/* --------------------------- helpers --------------------------- */
-
-function resolveOnErrorId(flow) {
-  if (flow?.blocks?.onerror) return 'onerror';
-  const entry = Object.entries(flow?.blocks || {}).find(
-    ([, b]) => (b?.label || '').toLowerCase() === 'onerror'
-  );
-  return entry ? entry[0] : null;
-}
-
-function parseInboundMessage(msg) {
-  const out = { text: null, id: null, title: null, type: null };
-
-  try {
-    // Meta WhatsApp Business API (webhook oficial)
-    if (msg?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-      const message = msg.entry[0].changes[0].value.messages[0];
-      return parseWhatsAppMessage(message);
-    }
-
-    // Outras libs que já extraem "messages"
-    if (msg?.messages?.[0]) {
-      return parseWhatsAppMessage(msg.messages[0]);
-    }
-
-    // Mensagem direta (tests)
-    if (typeof msg === 'string') {
-      out.text = msg.trim();
-      out.type = 'text';
-      return out;
-    }
-
-    // Estrutura alternativa
-    if (msg?.message) {
-      return parseWhatsAppMessage(msg.message);
-    }
-
-    return parseWhatsAppMessage(msg);
-
-  } catch (error) {
-    console.error('Error parsing message:', error);
-    return out;
-  }
-}
-
-function parseWhatsAppMessage(message) {
-  const out = { text: null, id: null, title: null, type: null };
-
-  if (!message) return out;
-
-  out.type = message.type || 'text';
-
-  switch (message.type) {
-    case 'text':
-      out.text = message.text?.body?.trim() || '';
-      break;
-
-    case 'interactive':
-      if (message.interactive?.button_reply) {
-        out.id = message.interactive.button_reply.id;
-        out.title = message.interactive.button_reply.title;
-        out.text = message.interactive.button_reply.title; // compat
-      } else if (message.interactive?.list_reply) {
-        out.id = message.interactive.list_reply.id;
-        out.title = message.interactive.list_reply.title;
-        out.text = message.interactive.list_reply.title; // compat
-      }
-      break;
-
-    case 'button':
-      out.id = message.button?.payload;
-      out.title = message.button?.text;
-      out.text = message.button?.text; // compat
-      break;
-
-    default:
-      if (message.text?.body) {
-        out.text = message.text.body.trim();
-      } else if (message.body) {
-        out.text = message.body.trim();
-      }
-  }
-
-  return out;
-}
-
-function normalizeStr(v) {
-  if (v == null) return '';
-  let s = String(v);
-  try { s = s.normalize('NFD').replace(/\p{Diacritic}/gu, ''); } catch {}
-  return s.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-/**
- * Constrói mapa id<->title do bloco interativo atual (list ou button).
- * Usado para preencher/validar respostas, sem alterar o flow.
- */
-function buildInteractiveAliases(block) {
-  const out = { id2title: {}, title2id: {} };
-  const c = block?.content;
-  if (!c) return out;
-
-  // List menu
-  if (c.type === 'list') {
-    for (const section of c.action?.sections || []) {
-      for (const row of section.rows || []) {
-        if (!row?.id || !row?.title) continue;
-        out.id2title[row.id] = row.title;
-        out.title2id[normalizeStr(row.title)] = row.id;
-      }
-    }
-  }
-
-  // Button menu
-  if (c.type === 'button') {
-    for (const b of c.action?.buttons || []) {
-      const id = b?.reply?.id;
-      const title = b?.reply?.title;
-      if (!id || !title) continue;
-      out.id2title[id] = title;
-      out.title2id[normalizeStr(title)] = id;
-    }
-  }
-
-  return out;
-}
-
-/**
- * Avaliação inteligente de condições:
- * - Tenta direto com vars.
- * - Se falhar, tenta com lastReplyId e lastReplyTitle como lastUserMessage.
- * - Se ainda falhar, constrói um pool de candidatos (id/title/alias normalizados)
- *   e reavalia contra cada candidato.
- */
-function evalConditionsSmart(conditions = [], vars = {}) {
-  if (evaluateConditions(conditions, vars)) return true;
-
-  if (vars.lastReplyId) {
-    const v2 = { ...vars, lastUserMessage: vars.lastReplyId };
-    if (evaluateConditions(conditions, v2)) return true;
-  }
-  if (vars.lastReplyTitle) {
-    const v3 = { ...vars, lastUserMessage: vars.lastReplyTitle };
-    if (evaluateConditions(conditions, v3)) return true;
-  }
-
-  // Normalização básica
-  const vNorm = {
-    ...vars,
-    lastUserMessage: normalizeStr(vars.lastUserMessage),
-    lastReplyId: normalizeStr(vars.lastReplyId),
-    lastReplyTitle: normalizeStr(vars.lastReplyTitle),
-  };
-  const cNorm = (conditions || []).map((c) => {
-    if (!c) return c;
-    const type = c.type?.toLowerCase?.();
-    if (['equals','not_equals','contains','starts_with','ends_with'].includes(type)) {
-      return { ...c, value: normalizeStr(c.value) };
-    }
-    return c;
-  });
-  if (evaluateConditions(cNorm, vNorm)) return true;
-
-  // Pool de candidatos (id/title e aliases)
-  const poolRaw = Array.isArray(vars._candidates) ? vars._candidates : [];
-  const pool = Array.from(new Set(
-    [
-      vars.lastUserMessage,
-      vars.lastReplyTitle,
-      vars.lastReplyId,
-      ...poolRaw
-    ].filter(Boolean).map(normalizeStr)
-  ));
-
-  if (pool.length) {
-    for (const candidate of pool) {
-      const v = {
-        ...vars,
-        lastUserMessage: candidate,
-        lastReplyId: normalizeStr(vars.lastReplyId),
-        lastReplyTitle: normalizeStr(vars.lastReplyTitle),
-      };
-      if (evaluateConditions(cNorm, v)) return true;
-    }
-  }
-
-  return false;
-}
-
-function determineNextSmart(block, vars, flow, currentId) {
-  for (const action of block?.actions || []) {
-    if (evalConditionsSmart(action.conditions || [], vars)) {
-      return action.next;
-    }
-  }
-  if (block?.defaultNext && flow.blocks[block.defaultNext]) {
-    return block.defaultNext;
-  }
-  return null;
-}
-
-async function sendConfiguredMessage(entry, { channel, userId, io }) {
-  if (!entry) return null;
-  if (entry.delayMs) {
-    const ms = Number(entry.delayMs);
-    if (!Number.isNaN(ms) && ms > 0) await new Promise(r => setTimeout(r, ms));
-  }
-  const type = entry.type || 'text';
-  const content =
-    typeof entry.message === 'string'
-      ? { text: entry.message }
-      : (entry.payload || entry.content || null);
-  if (!content) return null;
-
-  try {
-    const rec = await sendMessageByChannel(channel, userId, type, content);
-    if (io && rec) {
-      try { io.emit('new_message', rec); } catch {}
-      try { io.to(`chat-${userId}`).emit('new_message', rec); } catch {}
-    }
-    return rec;
-  } catch (e) {
-    console.error('[flowExecutor] sendConfiguredMessage error:', e);
-    return null;
-  }
-}
-
-function resolveByIdOrLabel(flow, key) {
-  if (!key) return null;
-  if (flow.blocks[key]) return key;
-  const found = Object.entries(flow.blocks).find(([, b]) => (b?.label || '') === key);
-  return found ? found[0] : null;
-}
+// helpers centralizados
+import {
+  resolveOnErrorId,
+  parseInboundMessage,
+  buildInteractiveAliases,
+  determineNextSmart,
+  sendConfiguredMessage,
+  resolveByIdOrLabel,
+  buildProtocol,
+} from './helpers.js';
 
 /* --------------------------- executor --------------------------- */
 
@@ -265,6 +39,11 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
   const session = await loadSession(userId);
   let sessionVars = { ...(vars || {}), ...(session?.vars || {}) };
   if (!sessionVars.channel) sessionVars.channel = CHANNELS.WHATSAPP;
+
+  // ✅ garante que exista um protocol logo de cara
+  if (!sessionVars.protocol) {
+    sessionVars.protocol = buildProtocol(sessionVars);
+  }
 
   console.log('💾 Session loaded:', session);
   console.log('📊 Session vars:', sessionVars);
@@ -298,7 +77,15 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       currentBlockId = nextFromHuman;
     } else {
       console.log('📞 Distributing ticket for human session');
-      try { await distribuirTicket(rawUserId, sVars.fila, sVars.channel); } catch (e) {
+      try {
+        const dist = await distribuirTicket(rawUserId, sVars.fila, sVars.channel);
+        if (dist?.ticketNumber || dist?.ticketId || dist?.id) {
+          const t = String(dist.ticketNumber || dist.ticketId || dist.id);
+          sVars.ticketNumber = t;
+          sVars.protocol = buildProtocol({ ...sVars, ticketNumber: t });
+          await saveSession(userId, 'human', flow.id, sVars);
+        }
+      } catch (e) {
         console.error('[flowExecutor] Falha ao distribuir ticket (sessão humana):', e);
       }
       return null;
@@ -326,7 +113,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
             return null;
           }
 
-          // Atualiza variáveis com a mensagem recebida (sem 'init' fake)
           const hasInbound =
             !!(inbound && (inbound.title || inbound.text || inbound.id));
           sessionVars.lastUserMessage = hasInbound
@@ -336,7 +122,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           sessionVars.lastReplyTitle = hasInbound ? (inbound.title ?? null) : (sessionVars.lastReplyTitle ?? null);
           sessionVars.lastMessageType = hasInbound ? inbound.type : (sessionVars.lastMessageType ?? 'init');
 
-          // Se o bloco aguardando é interativo, construir aliases e pool
           if (awaiting?.type === 'interactive') {
             const aliases = buildInteractiveAliases(awaiting);
 
@@ -349,13 +134,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
               sessionVars.lastReplyId = id || sessionVars.lastReplyId;
             }
 
-            // Pool de candidatos
             sessionVars._candidates = Array.from(new Set([
               sessionVars.lastUserMessage,
               sessionVars.lastReplyTitle,
               sessionVars.lastReplyId,
               aliases.id2title[sessionVars.lastReplyId],
-              aliases.title2id[normalizeStr(sessionVars.lastReplyTitle)]
+              aliases.title2id?.[normalizeStr(sessionVars.lastReplyTitle)]
             ].filter(Boolean)));
           }
 
@@ -373,7 +157,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       currentBlockId = flow.start;
       console.log('🚀 Starting new session from flow start');
 
-      // Inicializa variáveis só se houver mensagem real do usuário
       const hasInbound =
         !!(inbound && (inbound.title || inbound.text || inbound.id));
       sessionVars.lastUserMessage = hasInbound
@@ -410,7 +193,6 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       const bhCfg = await loadQueueBH(sessionVars.fila);
       const { open, reason } = bhCfg ? isOpenNow(bhCfg) : { open: true, reason: null };
 
-      // popula variáveis p/ condições no builder
       sessionVars.offhours = !open;
       sessionVars.offhours_reason = reason;
       sessionVars.isHoliday = reason === 'holiday';
@@ -430,7 +212,7 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
           console.log('📤 Sending off-hours message');
           await sendConfiguredMessage(msgCfg, {
             channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
+            userId, io, vars: sessionVars
           });
         }
 
@@ -468,12 +250,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
         if (bhCfg?.pre_human) {
           await sendConfiguredMessage(bhCfg.pre_human, {
             channel: sessionVars.channel || CHANNELS.WHATSAPP,
-            userId, io
+            userId, io, vars: sessionVars
           });
         } else if (block.content?.transferMessage) {
           await sendConfiguredMessage(
             { type: 'text', message: block.content.transferMessage },
-            { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io }
+            { channel: sessionVars.channel || CHANNELS.WHATSAPP, userId, io, vars: sessionVars }
           );
         }
       }
@@ -493,7 +275,13 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
       await saveSession(userId, 'human', flow.id, sessionVars);
 
       try {
-        await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
+        const dist = await distribuirTicket(rawUserId, sessionVars.fila, sessionVars.channel);
+        if (dist?.ticketNumber || dist?.ticketId || dist?.id) {
+          const t = String(dist.ticketNumber || dist.ticketId || dist.id);
+          sessionVars.ticketNumber = t;
+          sessionVars.protocol = buildProtocol({ ...sessionVars, ticketNumber: t });
+          await saveSession(userId, 'human', flow.id, sessionVars);
+        }
         console.log('✅ Ticket distributed successfully');
       } catch (e) {
         console.error('[flowExecutor] Falha ao distribuir ticket (human):', e);
@@ -505,6 +293,12 @@ export async function runFlow({ message, flow, vars, rawUserId, io }) {
     let content = '';
     if (block.content != null) {
       try {
+        // garante que protocol sempre esteja atualizado (caso ticketNumber tenha surgido em bloco anterior)
+        if (sessionVars.ticketNumber) {
+          const nextProt = buildProtocol(sessionVars);
+          if (sessionVars.protocol !== nextProt) sessionVars.protocol = nextProt;
+        }
+
         content = typeof block.content === 'string'
           ? substituteVariables(block.content, sessionVars)
           : JSON.parse(substituteVariables(JSON.stringify(block.content), sessionVars));
